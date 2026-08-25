@@ -7,8 +7,8 @@ compact params+latency+VRAM table. Identity tabs also show the predicted person'
 and ImageNet tabs score each model against the ground truth when the image carries one. Inference
 runs through native PyTorch or a TensorRT engine (tools/build_trt.py), selectable in the UI.
 
-Run path is tuned for latency: each model is warmed up once per (task, model, backend), then every
-click times the single real forward that produces the prediction — no extra iterations.
+Run path is tuned for latency: each model is warmed up `_WARMUP` times per (task, model, backend),
+then every click times the single real forward that produces the prediction — no extra iterations.
 
 Launch:  python app.py        (then open the printed http://127.0.0.1:7860)
 Test:    python tools/selftest.py
@@ -59,7 +59,12 @@ ATTR_THRESHOLD = 0.50    # CelebA is multi-label: show every attribute scoring a
 # that sample was at 0.29 (base) and 0.23 (ghost); 0.235 is the shared value in use.
 LFW_THRESHOLD = 0.235
 _UNTRAINED_STD = 0.005
-_WARMUP = 2
+# 2 was not enough. Sweeping 50 presses with a different image each time, the first *timed* forward
+# still came in +16% over steady state on ImageNet/PyTorch (46.4 ms against 40.0) and +4% on CelebA,
+# i.e. the very number a user reads after one click was the worst of the fifty. At 5 that excess
+# drops to +2% and 10 buys nothing more; TensorRT was never affected, since an engine does no
+# run-time autotuning. The cost is three extra forwards on the first click of a tab, ~120 ms once.
+_WARMUP = 5
 _LAT_WINDOW = 7          # median over this many recent real forwards, to ride out system jitter
 
 JOBS = {
@@ -459,8 +464,10 @@ def _table(rows):
 
 RES_NOTE = ("**Latency** is the median of your recent real forwards for this model and backend "
             "(CUDA events, batch 1) — no extra passes are run, and the median rides out the system "
-            "jitter that makes any single batch-1 timing swing wildly. Each model warms up once per "
-            "task and backend, so the first click pays the cuDNN autotune. **Peak VRAM** is that model's weights "
+            "jitter that makes any single batch-1 timing swing wildly. Each model runs a few warm-up "
+            "forwards per task and backend before its first *timed* one, so the figure is "
+            "always a warm number — the first click of a tab just takes a moment longer to "
+            "come back. **Peak VRAM** is that model's weights "
             "plus the activation peak of that same forward, so it excludes the other cached arm and "
             "the CUDA context and stays comparable between the two. On a **TensorRT** row it is the "
             "engine's own weights plus the scratch block TensorRT asks for — torch's allocator "

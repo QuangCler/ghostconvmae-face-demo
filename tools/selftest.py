@@ -5,10 +5,17 @@ Two phases, both driven by the *same* entry points the UI calls, so what this pr
 click in the browser produces:
 
   A. Backend matrix — for each task and each backend (PyTorch / TensorRT FP16 / FP32) it presses
-     "Run both models" ``--iters`` times on one fixed held-out sample. It reports the backend each
-     arm actually ran on (TensorRT silently falls back, and the label is the only honest record of
-     that), the resource row, whether the top-1 stayed identical across all iterations, and — for
-     the TensorRT rows — the agreement gate against the PyTorch answer for the same image.
+     "Run both models" ``--iters`` times. It reports the backend each arm actually ran on (TensorRT
+     falls back silently, and the label is the only honest record of that), the resource row, the
+     agreement gate against the PyTorch answer, and the **raw** per-press latency — min / median /
+     p90 / max, the first press, how far the second half drifts from the first, and any press over
+     3x the median. The table itself only ever shows a 7-press median, which is what makes the
+     Base-vs-Ghost ratio readable but is also exactly what would hide a one-off stall.
+
+     By default every press uses the same image, which isolates the backend. ``--distinct-images``
+     feeds a different held-out image to each press instead: that is the realistic demo pattern and
+     the one that would expose a cost hiding in preprocessing or in an input-dependent path. With
+     it, top-1 is expected to differ press to press and is no longer checked for stability.
 
   B. Accuracy sweep — a held-out sample per task, scored with that task's own metric and compared
      against the number the README/report claims. This is the part that catches a *silently* wrong
@@ -21,12 +28,14 @@ because a 4 GB laptop card cannot hold ten backbones plus five pairs of engines 
     python tools/selftest.py                       # full run
     python tools/selftest.py --iters 50 --samples 400
     python tools/selftest.py --jobs CASIA ImageNet --skip-accuracy
+    python tools/selftest.py --distinct-images --skip-accuracy   # latency hunt, 50 images/backend
 """
 import argparse
 import json
 import os
 import random
 import re
+import statistics
 import sys
 import time
 
@@ -170,20 +179,66 @@ def press_run(job, backend, sample):
             {"face_baseline": bool(gb), "face_ghost": bool(gg)})
 
 
-def phase_a(job, iters, sample):
-    print(f"\n=== {job} — backend matrix ({iters} presses of “Run both models” per backend) ===")
+_RAW = []          # (arm, label, raw_ms) appended by the tracer below, one per infer_one call
+
+
+def trace_latencies():
+    """Wrap infer_one so the *raw* per-forward time is visible, not just the table's median.
+
+    The resource table deliberately shows a median over the last `_LAT_WINDOW` forwards, which is
+    what makes the Base-vs-Ghost comparison readable — but it also hides exactly the thing a
+    latency hunt is looking for: a single press that blows out. `infer_one` has already appended
+    the raw figure to its own history by the time it returns, and its return value names the
+    history key, so read the value straight back out instead of re-timing anything.
+    """
+    original = app.infer_one
+
+    def traced(job, arm, x, backend, feats=False):
+        out, med, label, meta = original(job, arm, x, backend, feats)
+        hist = app._LATENCY.get((job, arm, backend, feats, label))
+        _RAW.append((arm, label, hist[-1] if hist else float("nan")))
+        return out, med, label, meta
+
+    app.infer_one = traced
+    return original
+
+
+def _lat_stats(values):
+    """min / median / p90 / max plus the spikes and drift a latency bug shows up as."""
+    v = sorted(values)
+    n = len(v)
+    med = statistics.median(v)
+    p90 = v[min(n - 1, int(round(0.9 * (n - 1))))]
+    spikes = [x for x in values if med and x > 3 * med]
+    half = max(1, len(values) // 2)
+    early, late = statistics.median(values[:half]), statistics.median(values[half:])
+    drift = (late - early) / early * 100 if early else 0.0
+    # How far the first *timed* press sits above the rest. This is the number a visitor reads
+    # after one click, and too few warm-up forwards is exactly what inflates it.
+    rest = statistics.median(values[1:]) if n > 1 else med
+    first_excess = (values[0] - rest) / rest * 100 if rest else 0.0
+    return {"n": n, "min": v[0], "med": med, "p90": p90, "max": v[-1], "first": values[0],
+            "first_excess_pct": first_excess, "spikes": len(spikes), "drift_pct": drift}
+
+
+def phase_a(job, iters, sample, samples=None):
+    kind = "a different held-out image each press" if samples else "one fixed image"
+    print(f"\n=== {job} — backend matrix ({iters} presses of “Run both models”, {kind}) ===")
     results, ref = {}, None
     for backend in BACKENDS:
         t0 = time.perf_counter()
         preds, table, extra, err = None, None, None, None
         seen = {a: set() for a in ARMS}
+        _RAW.clear()
         try:
-            for _ in range(iters):
-                preds, table, extra = press_run(job, backend, sample)
+            for i in range(iters):
+                preds, table, extra = press_run(job, backend,
+                                                samples[i % len(samples)] if samples else sample)
                 for a in ARMS:
                     seen[a].add(preds[a][0])
         except Exception as e:                       # a broken backend must not kill the sweep
             err = f"{type(e).__name__}: {e}"
+        raw = {a: [ms for arm, _, ms in _RAW if arm == a and ms == ms] for a in ARMS}
         wall = time.perf_counter() - t0
         if err:
             print(f"  {backend:18s} ERROR  {err}")
@@ -204,9 +259,25 @@ def phase_a(job, iters, sample):
                 agree = "top-1 ✓" if name == ref[a][0] else f"top-1 ✗ (PyTorch said {ref[a][0]})"
                 dp = abs(prob - ref[a][1]) if prob is not None and ref[a][1] is not None else float("nan")
                 gate = f" | vs PyTorch: {agree}, Δp {dp:.4f}"
-            stab = "" if results[backend]["stable"][a] else "  ⚠ TOP-1 DRIFTED ACROSS ITERATIONS"
+            stab = ("" if samples or results[backend]["stable"][a]
+                    else "  ⚠ TOP-1 DRIFTED ACROSS ITERATIONS")
             print(f"  {backend:18s} {a:8s} ran={r['backend']:22s} "
                   f"{r['latency_ms']:>6s} ms  {r['vram_MB']:>5s} MB  {shown}{gate}{stab}")
+            if raw[a]:
+                s = _lat_stats(raw[a])
+                results[backend].setdefault("raw", {})[a] = s
+                warn = ""
+                if s["spikes"]:
+                    warn += f"  ⚠ {s['spikes']} press(es) over 3x median"
+                if abs(s["drift_pct"]) > 15:
+                    warn += f"  ⚠ drift {s['drift_pct']:+.0f}% first half -> second half"
+                if s["first_excess_pct"] > 10:
+                    warn += (f"  ⚠ first press {s['first_excess_pct']:+.0f}% over the rest "
+                             "(raise app._WARMUP)")
+                print(f"  {'':18s} {'':8s} raw n={s['n']:<4d}"
+                      f"min {s['min']:5.1f}  med {s['med']:5.1f}  p90 {s['p90']:5.1f}  "
+                      f"max {s['max']:6.1f}  1st {s['first']:5.1f} ({s['first_excess_pct']:+.0f}%)  "
+                      f"drift {s['drift_pct']:+5.1f}%{warn}")
         for k, v in extra.items():
             if k.startswith("face_") and not v:
                 print(f"  {backend:18s} {'':8s} ⚠ no predicted-person image resolved ({k})")
@@ -334,9 +405,13 @@ def main():
     ap.add_argument("--samples", type=int, default=400, help="held-out images per accuracy check")
     ap.add_argument("--skip-accuracy", action="store_true")
     ap.add_argument("--skip-matrix", action="store_true")
+    ap.add_argument("--distinct-images", action="store_true",
+                    help="feed a different held-out image to every press (default: one fixed "
+                         "image, which isolates the backend but hides any per-image cost)")
     ap.add_argument("--out", default=None, help="write the raw results as JSON here")
     args = ap.parse_args()
 
+    trace_latencies()
     print(f"device={app.DEVICE}  cuda={app.CUDA}  tensorrt={trt_backend.available()}")
     if app.CUDA:
         print(f"gpu={torch.cuda.get_device_name(0)}  "
@@ -347,8 +422,14 @@ def main():
         teardown()
         entry = {}
         if not args.skip_matrix:
-            sample = (lfw_pairs(1)[0][:2] if job == "LFW" else pick_samples(job, 1)[0])
-            entry["matrix"] = phase_a(job, args.iters, sample)
+            if job == "LFW":
+                pairs = lfw_pairs(max(1, args.iters // 2 + 1))
+                sample, many = pairs[0][:2], [p[:2] for p in pairs[:args.iters]]
+            else:
+                picked = pick_samples(job, max(1, args.iters))
+                sample, many = picked[0], picked
+            entry["matrix"] = phase_a(job, args.iters, sample,
+                                      many if args.distinct_images else None)
             teardown()
         if not args.skip_accuracy:
             entry["accuracy"] = phase_b(job, args.samples)

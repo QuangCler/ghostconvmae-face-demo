@@ -245,9 +245,12 @@ demo adds no extra passes, so turning the table on costs nothing at inference ti
 
 - **Latency** — CUDA events around that forward (wall-clock `perf_counter` on CPU). CUDA events
   measure the GPU's own execution window rather than the wall time around an asynchronous launch.
-  Each model warms up **once** per task and backend before its first timed run: the very first
-  forward pays cuDNN autotuning and allocator growth, which would otherwise land entirely on your
-  first click and make the Base-vs-Ghost ratio meaningless.
+  Each model runs a few warm-up forwards per task and backend before its first *timed* one, so
+  the figure is always a warm number; the first click of a tab simply takes a moment longer to come
+  back. Two warm-ups turned out not to be enough — measured over 50 presses with a different image
+  each time, the first timed forward still landed +16% over steady state on ImageNet/PyTorch, which
+  is exactly the number someone reads after a single click. It is 5 now (+2%); TensorRT never showed
+  the effect, since an engine does no run-time autotuning.
 - **Peak VRAM** — that model's **weights + the activation peak of that same forward**, taken as the
   rise in `max_memory_allocated` over the pre-forward baseline. Reporting the raw process-wide peak
   instead — what a naive `max_memory_allocated()` call gives — counts the *other* cached arm and the
