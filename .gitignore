@@ -1,0 +1,23 @@
+# --- secrets: never commit ---------------------------------------------------
+# .env holds live W&B / GitHub / Kaggle credentials. The scripts read them from
+# the environment or ~/.kaggle/kaggle.json, so nothing here needs the file.
+.env
+*.pem
+*.key
+
+# --- environments ------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# --- fetched or generated data (GBs; rebuild with the scripts in the README) --
+datasets/*
+!datasets/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+engines/*
+!engines/.gitkeep
+
+# --- generated at runtime ----------------------------------------------------
+lfw_thresholds.json
