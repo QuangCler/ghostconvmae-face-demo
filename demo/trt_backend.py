@@ -81,6 +81,24 @@ def infer(path, x):
     return out
 
 
+def release(keep_job=None):
+    """Free every loaded engine except `keep_job`'s (all of them when `keep_job` is None).
+
+    Returns how many were freed. An engine's weights and its execution context's scratch live
+    outside torch's allocator — several hundred MB each on these backbones, and
+    `torch.cuda.empty_cache()` cannot touch them — so holding one per tab visited is what fills a
+    4 GB card. The engine filename carries the job (`{job}_{arm}_{prec}.engine`), which is the same
+    contract `engine_path` writes.
+    """
+    prefix = None if keep_job is None else f"{keep_job}_"
+    stale = [p for p in _ENGINES
+             if prefix is None or not os.path.basename(p).startswith(prefix)]
+    for path in stale:
+        engine, ctx = _ENGINES.pop(path)
+        del ctx, engine          # the context first: it holds the device memory the engine lent it
+    return len(stale)
+
+
 def footprint(path):
     """{'weights_MB', 'workspace_MB'} for a built engine — the memory TensorRT itself needs.
 

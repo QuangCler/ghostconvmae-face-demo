@@ -19,7 +19,7 @@ import inspect
 import json
 import statistics
 import time
-from collections import OrderedDict, deque
+from collections import deque
 
 import numpy as np
 import torch
@@ -167,14 +167,15 @@ PREPROC = transforms.Compose([
     transforms.Resize(256, interpolation=_BICUBIC), transforms.CenterCrop(224),
     transforms.ToTensor(), transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
-# Least-recently-used, bounded. Ten backbones do fit on this 4 GB card — 3,447 MB allocated,
-# 3,829 MB reserved — but that leaves **0 MB free**, so a visitor who has opened all five tabs and
-# then switches the dropdown to TensorRT has no room left for an engine and is silently dropped back
-# to PyTorch. Three is the smallest bound that never thrashes *within* a press, since one press of
-# "Run both models" needs both arms of one task; it costs a reload (~2-4 s) when you come back to a
-# task whose pair has since been evicted.
-_CACHE_MAX = 3
-_CACHE = OrderedDict()
+# One task on the card at a time: the two arms of whichever tab you are on, and nothing else.
+# Ten backbones do technically fit in 4 GB — 3,447 MB allocated, 3,829 MB reserved — but that
+# leaves **0 MB free**, so a visitor who had opened every tab and then picked TensorRT found no
+# room for an engine and was silently dropped back to PyTorch. Holding only the current pair keeps
+# ~3 GB free instead, which is the difference between the demo's headline feature working and not.
+# The cost is honest and bounded: moving to another tab reloads that tab's two models (~2-4 s on
+# its first press), and it can never thrash *within* a press, because a press only ever needs the
+# pair it is already holding.
+_CACHE = {}              # (job, arm) -> (model, meta), for exactly one job
 _WARMED = set()
 _LATENCY = {}            # (job, arm, backend, feats, label) -> recent forward times, for the median
 _CELEBA_TRUTH = None     # {basename: [true attribute names]}
@@ -270,27 +271,37 @@ def _head_size(ckpt_path):
     return sd["head.weight"].shape[0]
 
 
-def _evict():
-    """Drop least-recently-used models until the cache is back within `_CACHE_MAX`.
+def _release(keep_job):
+    """Drop every model and every TensorRT engine that does not belong to `keep_job`.
 
-    The warm-up flags go with them: a reloaded model is cold again, and leaving `_WARMED` set would
-    send the next click straight to a timed forward on an unautotuned model — the +16% first-press
-    inflation `_WARMUP` exists to prevent. The latency history is kept, since it describes the same
-    model on the same backend either way.
+    Called from two places, deliberately. Each tab's `.select` calls it so the card is freed the
+    moment you leave a tab, and `get_model` calls it again on the way in — because `.select` is a
+    browser event and this has to hold whatever the UI does, including `selftest.py` and anything
+    else driving the handlers directly.
+
+    The warm-up flags go with the models. A reloaded model is cold again, and leaving `_WARMED` set
+    would send the next click straight to a timed forward on an unautotuned one — a cold forward is
+    251 ms here against 41 ms warm, which is the whole reason `_WARMUP` exists. The latency history
+    stays: it describes the same model on the same backend either way.
+
+    Engines go too, and they are the larger half — TensorRT holds its weights and scratch outside
+    torch's allocator, several hundred MB per engine, invisible to `empty_cache()`.
     """
-    while len(_CACHE) > _CACHE_MAX:
-        (job, arm), (model, _) = _CACHE.popitem(last=False)
-        for k in [k for k in _WARMED if k[0] == job and k[1] == arm]:
-            _WARMED.discard(k)
+    stale = [k for k in _CACHE if k[0] != keep_job]
+    for key in stale:
+        model, _ = _CACHE.pop(key)
+        for w in [w for w in _WARMED if w[:2] == key]:
+            _WARMED.discard(w)
         del model
-        if CUDA:
-            torch.cuda.empty_cache()
+    freed_engines = trt_backend.release(keep_job)
+    if CUDA and (stale or freed_engines):
+        torch.cuda.empty_cache()
 
 
 def get_model(job, arm):
+    _release(job)
     key = (job, arm)
     if key in _CACHE:
-        _CACHE.move_to_end(key)          # most recently used
         return _CACHE[key]
     spec = JOBS[job]
     path = os.path.join(CKPT, spec["ckpts"][arm])
@@ -311,7 +322,6 @@ def get_model(job, arm):
             "weights_MB": weights_B / 1e6, "ckpt_MB": os.path.getsize(path) / 1e6,
             "head_std": head_std, "untrained": head_std is not None and head_std < _UNTRAINED_STD}
     _CACHE[key] = (model, meta)
-    _evict()
     return _CACHE[key]
 
 
@@ -1059,8 +1069,12 @@ def build_ui():
 
         comps = [c for c, _ in clearables]
         resets = [v for _, v in clearables]
-        for tab in (t1, t2, t3, t4, t5):
-            tab.select(lambda: resets, inputs=None, outputs=comps)
+        # Selecting a tab clears every component *and* frees the card: only the selected task's
+        # models and engines are kept. `get_model` enforces the same thing on the way in, so this
+        # is not what makes it correct — it is what makes it immediate, so the memory goes back
+        # when you leave a tab rather than when you next press a button on another one.
+        for tab, job in zip((t1, t2, t3, t4, t5), JOBS):
+            tab.select(lambda j=job: (_release(j), resets)[1], inputs=None, outputs=comps)
 
         gr.Markdown("Reference metrics are the paper's multi-seed A5000 results; this demo runs one image "
                     "live, so latency is a batch-1 laptop measurement — comparable between the two models.",

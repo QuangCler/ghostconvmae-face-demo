@@ -281,6 +281,13 @@ demo adds no extra passes, so turning the table on costs nothing at inference ti
   Ghost 609 MB). Batch 32 against batch 1 is why it is larger: use it as the reference regime, and
   use the measured column to compare the two arms on your own machine.
 
+**Only one task is held on the card at a time** — both arms of the tab you are on, and its engines,
+and nothing else. Switching tabs frees the previous task right away. All ten
+backbones do fit in 4 GB, but they leave *no* room for an engine afterwards, so a visitor who had
+opened every tab and then picked TensorRT was silently dropped back to PyTorch; touring all five
+tabs now stays at 2 models + 2 engines and 1.0–2.6 GB free. The cost is a ~2–4 s reload the first
+time you press a tab you have come back to.
+
 On the **LFW** tab the latency covers the **pair**: PyTorch embeds both faces in one batch-2
 forward, and because engines are built for batch 1, the TensorRT row *sums* its two calls. Averaging
 them instead would put a per-face number beside a per-pair one and show TensorRT as ~2x faster than

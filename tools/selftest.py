@@ -109,7 +109,7 @@ def teardown():
     app._CACHE.clear()
     app._WARMED.clear()
     app._LATENCY.clear()
-    trt_backend._ENGINES.clear()
+    trt_backend.release()                    # every engine, not just another job's
     # Also the "this engine will never load" memo: teardown is what frees the card, so a failure
     # caused by no free memory has to be allowed to succeed on the next job.
     trt_backend._BROKEN.clear()
