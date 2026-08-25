@@ -27,8 +27,9 @@ import csv
 import json
 import os
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-DATASETS = os.path.join(HERE, "datasets")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # repo root, one level up
+DATASETS = os.path.join(ROOT, "datasets")
+ASSETS = os.path.join(ROOT, "assets")
 
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 CASIA_VAL_PER_CLASS = 2          # prepare_casia.py held out the first 2 images of each identity
@@ -129,11 +130,11 @@ def _casia_classes():
     contiguous: label 09282 has only 2 images, both of which went to val, so it never reached
     train/ — class index i maps to label i below 9282 and i+1 from 9282 on.
 
-    `datasets/` is not in version control, so the copy under advice/ is the one a fresh clone gets;
+    `datasets/` is not in version control, so the copy under assets/ is the one a fresh clone gets;
     reading it directly keeps the CASIA tab working without the dataset having to be present.
     """
     for path in (os.path.join(DATASETS, "casia", "class_order.json"),
-                 os.path.join(HERE, "advice", "casia_class_maps", "casia_classes_baseline.json")):
+                 os.path.join(ASSETS, "casia_class_maps", "casia_classes_baseline.json")):
         if os.path.isfile(path):
             try:
                 with open(path) as f:
@@ -191,8 +192,27 @@ def scface_surveillance():
     return _first_dir(os.path.join(DATASETS, "scface", "surveillance_cameras_all"))
 
 
+SCFACE_IR_CAMS = ("cam6", "cam7")     # SCface's two night/IR surveillance cameras
+SCFACE_IR_MUGSHOT = "cam8"            # the IR mugshot (see the distribution's mugshot_IR_cam8.txt)
+
+
 def _scface_test():
-    """{'001 · cam1 · d1': path} — surveillance crops, named `<subject>_cam<n>_<distance>.jpg`."""
+    """{'001 · cam1 · d1': path} — everything under `surveillance_cameras_all/`, labelled by kind.
+
+    That folder is not one population but three, and the label has to say which, because their
+    accuracy differs by a factor of four (measured on all 130 subjects, ConvMAE-Base top-1):
+
+        cam1-cam5, distances 1-3   visible surveillance, 1,950 imgs   43.5%   <- the report's figure
+        cam6-cam7, distances 1-3   IR surveillance,        780 imgs   13.2%
+        cam8                       IR *mugshot*,           130 imgs   63.9%
+
+    Two file-naming traps live here. `cam8` has no distance token — it ships as `001_cam8.jpg`, one
+    per subject — so an earlier `len(parts) >= 3` check dropped those 130 entries to the raw
+    filename, leaving 4.5% of the picker reading `001_cam8.jpg` while the rest read
+    `001 · cam1 · d1`, and any code parsing the label for a subject id skipped them silently. And
+    `cam8` is a *mugshot* despite sitting in the surveillance folder. The subject is always
+    `parts[0]`, and it stays first in the label so a parser only needs that.
+    """
     root = scface_surveillance()
     if not root:
         return {}
@@ -200,8 +220,13 @@ def _scface_test():
     out = {}
     for fn in files:
         parts = os.path.splitext(fn)[0].split("_")
-        label = f"{parts[0]} · {parts[1]} · d{parts[2]}" if len(parts) >= 3 else fn
-        out[label] = os.path.join(root, fn)
+        bits = [parts[0]] + parts[1:2] + [f"d{p}" for p in parts[2:3]]
+        cam = parts[1] if len(parts) > 1 else ""
+        if cam == SCFACE_IR_MUGSHOT:
+            bits.append("IR mugshot")
+        elif cam in SCFACE_IR_CAMS:
+            bits.append("IR")
+        out[" · ".join(bits) or fn] = os.path.join(root, fn)
     return out
 
 
@@ -316,39 +341,74 @@ def locate(job, filename):
 def imagenet_val_dir():
     """The ImageNet-1K validation image folder feeding the linear-probe tab's picker.
 
-    The raw Kaggle competition ships a single flat ``val/`` folder of 50,000 JPEGs. Set
-    ``IMAGENET_VAL_DIR`` to point at an existing copy and skip the ~6.4 GB re-download.
+    Two layouts are accepted, because only one of them is worth downloading:
+
+    * ``<wnid>/ILSVRC2012_val_*.JPEG`` — the val-only Kaggle mirror `titericz/imagenet1k-val`
+      (~6.7 GB). The folder name IS the ground-truth class, so the tab can score the prediction.
+    * a flat folder of 50,000 JPEGs — what the Kaggle *competition*
+      `imagenet-object-localization-challenge` extracts to. Only reachable by pulling its ~155 GB
+      archive, and it carries no per-image label here, so it is the fallback, not the default.
+
+    Set ``IMAGENET_VAL_DIR`` to point at a copy you already have and skip the download entirely.
     """
     env = os.environ.get("IMAGENET_VAL_DIR")
     if env and os.path.isdir(env):
         return env
     return _first_dir(
-        os.path.join(DATASETS, "imagenet", "ILSVRC", "Data", "CLS-LOC", "val"),
+        os.path.join(DATASETS, "imagenet", "imagenet-val"),                     # val-only mirror
         os.path.join(DATASETS, "imagenet", "val"),
+        os.path.join(DATASETS, "imagenet", "ILSVRC", "Data", "CLS-LOC", "val"),  # competition
         os.path.join(DATASETS, "imagenet"))
 
 
 def _imagenet_test():
-    """{filename: path} of the flat ImageNet val images — the whole val set is held out (no
-    identity/class here was a training class in the sense the picker cares about; these are the
-    standard 50k val images the probe never trained on)."""
+    """{label: path} over the 50,000 held-out val images — the probe trained on `train/` only.
+
+    Labelled as ``<wnid>/<file>`` when the tree is class-foldered, so the picker entry itself says
+    which class the image really is; a flat tree falls back to the bare filename.
+    """
     root = imagenet_val_dir()
     if not root:
         return {}
-    return {fn: os.path.join(root, fn)
-            for fn in sorted(os.listdir(root)) if fn.lower().endswith(IMG_EXTS)}
+    entries = sorted(os.listdir(root))
+    wnids = [e for e in entries
+             if e.startswith("n") and os.path.isdir(os.path.join(root, e))]
+    if wnids:
+        return {f"{w}/{fn}": os.path.join(root, w, fn)
+                for w in wnids for fn in _identity_images(root, w)}
+    return {fn: os.path.join(root, fn) for fn in entries if fn.lower().endswith(IMG_EXTS)}
+
+
+def _imagenet_index():
+    """The bundled imagenet_class_index.json, as {"0": ["n01440764", "tench"], ...}."""
+    def build():
+        path = os.path.join(ASSETS, "imagenet_class_index.json")
+        if not os.path.exists(path):
+            return {}
+        with open(path) as f:
+            return json.load(f)
+    return _cached("imagenet_index", build)
 
 
 def imagenet_class_names():
     """{class_index: human name} from the bundled imagenet_class_index.json (sorted-wnid order,
     the ImageFolder convention the probe trained under)."""
-    def build():
-        path = os.path.join(HERE, "imagenet_class_index.json")
-        if not os.path.exists(path):
-            return {}
-        idx = json.load(open(path))
-        return {int(k): v[1].replace("_", " ") for k, v in idx.items()}
-    return _cached("imagenet_class_names", build)
+    return _cached("imagenet_class_names",
+                   lambda: {int(k): v[1].replace("_", " ") for k, v in _imagenet_index().items()})
+
+
+def imagenet_truth(rel_or_path):
+    """(class index, name) for a val image, read from the wnid folder it sits in; None if absent.
+
+    The class index is the position in sorted-wnid order — exactly what `ImageFolder` handed the
+    probe at training time — so the folder name alone is a sound ground truth, no label file needed.
+    """
+    if not rel_or_path:
+        return None
+    wnid = os.path.basename(os.path.dirname(str(rel_or_path).replace("\\", "/")))
+    idx = _cached("imagenet_wnids", lambda: {v[0]: int(k) for k, v in _imagenet_index().items()})
+    i = idx.get(wnid)
+    return None if i is None else (i, imagenet_class_names().get(i, wnid))
 
 
 # ------------------------------------------------------------------ public API
@@ -405,17 +465,24 @@ def status(job):
     """One-line description of what the picker is offering, shown under each dropdown."""
     n = len(test_samples(job))
     if not n:
-        return "Dataset not found — run `python fetch_datasets.py`, or drop your own image below."
+        return "Dataset not found — run `python tools/fetch_datasets.py`, or drop your own image below."
     if job == "CASIA":
         have, total = len(casia_extracted()), len(class_names("CASIA"))
         extra = ""
         if have < total:
             extra = (f" Only {have:,}/{total:,} identities are on disk — re-run "
-                     "`python extract_casia_recordio.py` (it resumes) for the rest.")
+                     "`python tools/extract_casia_recordio.py` (it resumes) for the rest.")
         return (f"{n:,} held-out images ({CASIA_VAL_PER_CLASS}/identity) across {have:,} "
                 f"identities — none of these were trained on.{extra}")
     if job == "ImageNet":
-        return f"{n:,} held-out ImageNet-1K val images — the probe never trained on any of them."
-    src = {"CelebA": "CelebA val+test partitions (1 & 2)",
-           "SCface": "surveillance crops (the model only trained on mugshots)"}[job]
-    return f"{n:,} samples from the {src} — none of these were trained on."
+        labelled = " Each entry is prefixed with its ground-truth wnid." if "/" in next(
+            iter(test_samples(job))) else " Flat tree — no per-image ground truth available."
+        return (f"{n:,} held-out ImageNet-1K val images — the probe never trained on any of "
+                f"them.{labelled}")
+    if job == "SCface":
+        return (f"{n:,} held-out images — the model only trained on the visible mugshots. Three "
+                "kinds, and they behave very differently: 1,950 visible surveillance crops "
+                "(cam1-5, the report's setting), 780 marked **IR** (cam6-7, far harder), and 130 "
+                "marked **IR mugshot** (cam8).")
+    return (f"{n:,} samples from the CelebA val+test partitions (1 & 2) — none of these were "
+            "trained on.")

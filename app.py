@@ -1,15 +1,17 @@
-"""Face-model inference demo (Gradio) — ConvMAE-Base vs Ghost+ConvMAE.
+"""Model inference demo (Gradio) — ConvMAE-Base vs Ghost+ConvMAE.
 
-Side-by-side comparison of the two fine-tuned backbones on four face tasks. Each tab describes
-what the models do, offers an in-UI image picker (from the task's dataset, or drop your own), and
-shows a compact params+latency table. Identity tabs also show the predicted person's face; the
-CelebA tab shows the ground-truth attributes when the image belongs to the dataset. Inference runs
-through native PyTorch or a TensorRT engine (build_trt.py), selectable in the UI.
+Side-by-side comparison of the two backbones on four face tasks (CelebA attributes, CASIA and
+SCface identity, LFW verification) plus an ImageNet-1K linear probe. Each tab describes what the
+models do, offers an in-UI image picker (from the task's dataset, or drop your own), and shows a
+compact params+latency+VRAM table. Identity tabs also show the predicted person's face; the CelebA
+and ImageNet tabs score each model against the ground truth when the image carries one. Inference
+runs through native PyTorch or a TensorRT engine (tools/build_trt.py), selectable in the UI.
 
 Run path is tuned for latency: each model is warmed up once per (task, model, backend), then every
 click times the single real forward that produces the prediction — no extra iterations.
 
 Launch:  python app.py        (then open the printed http://127.0.0.1:7860)
+Test:    python tools/selftest.py
 """
 import os
 import csv
@@ -24,10 +26,10 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
-from face_models import build_and_load, embed
-import linprobe_models as clsm
-import dataset_paths as dsp
-import trt_backend
+from demo.face_models import build_and_load, embed
+from demo import dataset_paths as dsp
+from demo import linprobe_models as clsm
+from demo import trt_backend
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CKPT = os.path.join(HERE, "checkpoints")
@@ -93,15 +95,28 @@ JOBS = {
         "purpose": ("Cross-resolution identification (130 subjects) — trained on high-res mugshots, "
                     "tested on low-res surveillance crops; the stress case where Ghost's compression "
                     "costs most. Predictions are subject IDs 001–130, with the predicted mugshot."),
-        "ref": "Paper (3 seeds): Top-1 45.13% (Base) vs 31.36% (Ghost) — low-resolution stressor.",
+        "ref": "Paper (3 seeds): Top-1 45.13% (Base) vs 31.36% (Ghost) on the visible cameras; "
+               "measured here 43.5% / 31.7% on those, 36.2% / 25.9% across the whole picker.",
         "setup": ("Read straight from the SCface distribution as it ships — no re-foldering needed.\n\n"
                   "**Input** — `datasets/scface/surveillance_cameras_all/<id>_cam<n>_<distance>.jpg`. "
                   "The fine-tune only ever saw mugshots, so every one of these crops is unseen *and* "
                   "out-of-domain: the strictest of the four tests.\n\n"
                   "**Predicted face** — `datasets/scface/mugshot_frontal_cropped_all/<id>_frontal.JPG`, "
                   "the high-res mugshot the model actually trained on.\n\n"
-                  "Base Top-1 is ~44%, so many crops land below the 50% threshold and read as "
-                  "'no confident match' — the face is still shown, marked low confidence.")},
+                  "**`surveillance_cameras_all/` holds three populations, not one** — worth knowing "
+                  "before reading any single result. Measured here over all 130 subjects "
+                  "(Top-1, Base / Ghost):\n\n"
+                  "| Picker entries | What it is | n | Top-1 |\n|---|---|---|---|\n"
+                  "| `cam1`–`cam5`, `d1`–`d3` | visible surveillance — **the report's setting** "
+                  "| 1,950 | **43.5% / 31.7%** |\n"
+                  "| marked `IR` (`cam6`, `cam7`) | infrared surveillance | 780 | 13.2% / 7.1% |\n"
+                  "| marked `IR mugshot` (`cam8`) | an IR *mugshot*, despite the folder | 130 | "
+                  "63.9% / 51.5% |\n\n"
+                  "So the paper's 45.13% / 31.36% lines up with the visible cameras; averaged over "
+                  "everything the picker offers it is 36.2% / 25.9%, because the model never saw "
+                  "infrared. Distance matters as much: Base runs 21% at `d1` against 42% at `d3`.\n\n"
+                  "Either way most crops land below the 50% threshold and read as 'no confident "
+                  "match' — the face is still shown, marked low confidence.")},
     "LFW": {
         "task": "verification", "num_classes": 1680, "title": "LFW — Face verification", "dataset": "lfw",
         "ckpts": {"baseline": "lfw_baseline.pth", "ghost": "lfw_ghost.pth"},
@@ -121,10 +136,14 @@ JOBS = {
                     "backbone's top-5 classes for the chosen image."),
         "ref": "ImageNet-1K linear-probe Top-1 (report): 64.06% (Base) vs 58.60% (Ghost).",
         "setup": ("**Input** — the standard ImageNet-1K **validation** set (50,000 held-out images), "
-                  "which the probe never trained on. Get it with `python fetch_datasets.py --only "
-                  "imagenet` (the Kaggle `imagenet-object-localization-challenge`, val ≈ 6.4 GB), or "
-                  "point `IMAGENET_VAL_DIR` at a copy you already have. Class names come from the "
-                  "bundled `imagenet_class_index.json`.\n\n"
+                  "which the probe never trained on. Get it with `python tools/fetch_datasets.py --only "
+                  "imagenet` — that pulls the *validation split only* (`titericz/imagenet1k-val`, "
+                  "≈6.7 GB), not the ~155 GB competition archive whose train half this demo never "
+                  "touches. Or point `IMAGENET_VAL_DIR` at a copy you already have.\n\n"
+                  "**Ground truth** — each val image lives in its `<wnid>/` folder, and wnids in "
+                  "sorted order *are* the class indices the probe trained under (`ImageFolder`), so "
+                  "the folder name alone scores the prediction — no label file needed. Names come "
+                  "from the bundled `imagenet_class_index.json`.\n\n"
                   "**Only ConvMAE-Base and Ghost+ConvMAE are shown here — the two Mamba arms "
                   "(Ghost+ForwardMamba, Ghost+BiMamba) are deliberately excluded from this demo.** "
                   "Their Stage-3 Mamba blocks need the CUDA-only `mamba_ssm` selective-scan kernels, "
@@ -150,7 +169,7 @@ _WARMED = set()
 _LATENCY = {}            # (job, arm, backend, feats, label) -> recent forward times, for the median
 _CELEBA_TRUTH = None     # {basename: [true attribute names]}
 try:
-    with open(os.path.join(HERE, "resource_meta.json")) as _f:
+    with open(os.path.join(HERE, "assets", "resource_meta.json")) as _f:
         _REF = json.load(_f)          # the report's A5000 reference numbers
 except Exception:
     _REF = {}
@@ -194,7 +213,7 @@ def load_sample(job, rel):
         return None, "", None
     full = dsp.test_samples(job).get(rel)
     if not full or not os.path.exists(full):
-        return None, "Sample not found — re-run `python fetch_datasets.py`.", None
+        return None, "Sample not found — re-run `python tools/fetch_datasets.py`.", None
     return full, f"Held-out · `{rel}`", rel
 
 
@@ -271,7 +290,7 @@ def get_model(job, arm):
 def infer_one(job, arm, x, backend, feats=False):
     model, meta = get_model(job, arm)
     kind, prec = BACKENDS.get(backend, ("pytorch", None))
-    label, call = "PyTorch", None
+    label, call, epath = "PyTorch", None, None
     if kind == "trt" and CUDA and trt_backend.available():
         epath = trt_backend.engine_path(ENGINES, job, arm, prec, feats)
         if os.path.exists(epath):
@@ -322,7 +341,12 @@ def infer_one(job, arm, x, backend, feats=False):
     # between the two arms; the median of the last few settles without running anything extra.
     hist = _LATENCY.setdefault((job, arm, backend, feats, label), deque(maxlen=_LAT_WINDOW))
     hist.append(ms)
-    return out, statistics.median(hist), label, dict(meta, act_MB=act, samples=len(hist))
+    # When an engine really ran, torch's allocator saw almost nothing: TensorRT holds its own
+    # weights and scratch outside it. Carry the engine's figures so the table can report what ran
+    # instead of the idle PyTorch copy's weights.
+    trt_fp = trt_backend.footprint(epath) if label.startswith("TensorRT") else None
+    return out, statistics.median(hist), label, dict(meta, act_MB=act, samples=len(hist),
+                                                     trt=trt_fp)
 
 
 # ---------------------------------------------------------------- prediction formatting
@@ -371,7 +395,7 @@ def _identity(job, out, meta):
         return d, [(face, f"{lab} · {top_p * 100:.0f}%{tag}")], msg
     if job == "CASIA" and not dsp.casia_split("train"):
         return d, [], (f"{msg}\n\n_No identity folders on disk — run "
-                       "`python extract_casia_recordio.py`._")
+                       "`python tools/extract_casia_recordio.py`._")
     return d, [], f"{msg} No train image on disk for this class — see *Where the faces come from* below."
 
 
@@ -410,11 +434,17 @@ def _table(rows):
         if meta is None:
             t.append([name, "checkpoint missing", "—", "—", "—", "—", str(ref)])
             continue
-        act = meta.get("act_MB")
-        vram = f"{meta['weights_MB'] + act:.0f}" if act is not None else "— (CPU)"
-        t.append([name, label, f"{meta['params_M']:.1f}", f"{meta['weights_MB']:.0f}",
+        act, trt = meta.get("act_MB"), meta.get("trt")
+        if trt:                       # the engine's own weights + the scratch it asks the context for
+            weights_MB = trt["weights_MB"]
+            vram_MB = trt["weights_MB"] + trt["workspace_MB"]
+        else:
+            weights_MB = meta["weights_MB"]
+            vram_MB = (meta["weights_MB"] + act) if act is not None else None
+        vram = f"{vram_MB:.0f}" if vram_MB is not None else "— (CPU)"
+        t.append([name, label, f"{meta['params_M']:.1f}", f"{weights_MB:.0f}",
                   f"{ms:.1f}", vram, str(ref)])
-        got[arm] = (meta["params_M"], ms, (meta["weights_MB"] + act) if act is not None else None)
+        got[arm] = (meta["params_M"], ms, vram_MB)
     if "baseline" in got and "ghost" in got:
         b, g = got["baseline"], got["ghost"]
 
@@ -432,15 +462,18 @@ RES_NOTE = ("**Latency** is the median of your recent real forwards for this mod
             "jitter that makes any single batch-1 timing swing wildly. Each model warms up once per "
             "task and backend, so the first click pays the cuDNN autotune. **Peak VRAM** is that model's weights "
             "plus the activation peak of that same forward, so it excludes the other cached arm and "
-            "the CUDA context and stays comparable between the two. **Paper A5000** is the report's "
+            "the CUDA context and stays comparable between the two. On a **TensorRT** row it is the "
+            "engine's own weights plus the scratch block TensorRT asks for — torch's allocator "
+            "cannot see either, so measuring an engine the PyTorch way would report the idle "
+            "PyTorch copy instead of what ran. **Paper A5000** is the report's "
             "FP16 batch-32 figure — a different regime, larger by design.")
 
 
 def _warn(rows):
     out = [f"⚠ **{ARM_NAME[a]}**'s checkpoint looks untrained (head σ≈{m['head_std']:.4f}); predictions "
-           f"are ~random. Re-run `python fetch_checkpoints.py` for the corrected file."
+           f"are ~random. Re-run `python tools/fetch_checkpoints.py` for the corrected file."
            for a, m, *_ in rows if m and m.get("untrained")]
-    out += [f"⚠ **{ARM_NAME[a]}**'s checkpoint is missing — run `python fetch_checkpoints.py`."
+    out += [f"⚠ **{ARM_NAME[a]}**'s checkpoint is missing — run `python tools/fetch_checkpoints.py`."
             for a, m, *_ in rows if m is None]
     return out
 
@@ -500,29 +533,51 @@ def run_identity(job, image, backend):
 
 
 def _classification(out):
-    """Top-5 ImageNet classes for one backbone: {class name: probability}, most confident first."""
+    """Top-5 ImageNet classes for one backbone: ({class name: probability}, [class indices])."""
     probs = out.float().softmax(-1)[0].cpu()
     v, idx = probs.topk(min(TOP_K, probs.numel()))
+    top = [int(c) for c in idx.tolist()]
     d = {}
-    for p, c in zip(v.tolist(), idx.tolist()):
-        d[dsp.class_label("ImageNet", int(c)) or f"class #{int(c)}"] = float(p)
-    return d
+    for p, c in zip(v.tolist(), top):
+        d[dsp.class_label("ImageNet", c) or f"class #{c}"] = float(p)
+    return d, top
 
 
-def run_classification(image, backend):
+def run_classification(image, backend, sel_rel):
+    """Both probes on one image, scored against the val image's own wnid folder when there is one.
+
+    Top-1 on a single image is a coin flip at ~60% accuracy, so the panel reports top-5 as well —
+    that is the pair of numbers the linear-probe protocol is actually read on.
+    """
     if image is None:
-        return {}, {}, [], "Choose a sample or drop an image, then run."
+        return {}, {}, "", [], "Choose a sample or drop an image, then run."
     x = PREPROC(_open(image)).unsqueeze(0).to(DEVICE)
-    labels, rows = {"baseline": {}, "ghost": {}}, []
+    labels, tops, rows = {"baseline": {}, "ghost": {}}, {}, []
     for arm in ("baseline", "ghost"):
         try:
             out, ms, label, meta = infer_one("ImageNet", arm, x, backend)
         except FileNotFoundError:
             rows.append((arm, None, None, None)); continue
         rows.append((arm, meta, ms, label))
-        labels[arm] = _classification(out)
+        labels[arm], tops[arm] = _classification(out)
+
+    truth = dsp.imagenet_truth(sel_rel)
+    if truth is None:
+        gt = ("_This image carries no ImageNet ground truth (dropped file, or a flat val tree), "
+              "so there is nothing to score against._")
+    else:
+        t_idx, t_name = truth
+        lines = [f"**Ground truth** — {t_name}  ·  class `{t_idx}`", ""]
+        for arm in ("baseline", "ghost"):
+            if arm not in tops:
+                continue
+            hit1 = tops[arm][0] == t_idx
+            hit5 = t_idx in tops[arm]
+            mark = "✓ top-1" if hit1 else ("✓ in top-5" if hit5 else "✗ missed")
+            lines.append(f"- **{ARM_NAME[arm]}** — {mark}")
+        gt = "\n".join(lines)
     note = (("\n\n".join(_warn(rows)) + "\n\n") if _warn(rows) else "") + RES_NOTE
-    return labels["baseline"], labels["ghost"], _table(rows), note
+    return labels["baseline"], labels["ghost"], gt, _table(rows), note
 
 
 def run_verify(image_a, image_b, backend):
@@ -540,7 +595,11 @@ def run_verify(image_a, image_b, backend):
             if trt:
                 ea, ma, label, meta = infer_one("LFW", arm, xa, backend, feats=True)
                 eb, mb, _, _ = infer_one("LFW", arm, xb, backend, feats=True)
-                ms = (ma + mb) / 2
+                # SUM, not average: the PyTorch row times one batch-2 forward, i.e. the cost of
+                # embedding *both* faces. Halving the engine's two batch-1 runs would set a
+                # per-face number beside a per-pair one and make TensorRT look ~2x better than it
+                # is. Both rows now mean "time to embed the pair".
+                ms = ma + mb
             else:
                 out, ms, label, meta = infer_one("LFW", arm, torch.cat([xa, xb]), backend, feats=True)
                 ea, eb = out[:1], out[1:]
@@ -555,10 +614,13 @@ def run_verify(image_a, image_b, backend):
                      f"→ **{verdict}**")
         rows.append((arm, meta, ms, label))
     foot = (f"\n\n_Verdict threshold: cosine > {LFW_THRESHOLD} on L2-normalised embeddings. "
-            "Run `python calibrate_lfw.py` to refit it per arm on the official pairs._")
+            "Run `python tools/calibrate_lfw.py` to refit it per arm on the official pairs._")
     body = ("\n".join(cards) if cards else "_No checkpoints bundled._") + foot
+    pair_how = ("the two faces run as two batch-1 engine calls (engines are built for batch 1) and "
+                "the latency is their sum" if trt else
+                "both faces go through as one batch-2 forward")
     note = (("\n\n".join(_warn(rows)) + "\n\n") if _warn(rows) else "") + \
-        RES_NOTE + "\n\nBoth faces go through as one batch-2 forward, so the latency covers the pair."
+        RES_NOTE + f"\n\nLatency here covers the **pair**: {pair_how}."
     return body, _table(rows), note
 
 
@@ -906,6 +968,7 @@ def build_ui():
         with gr.Tab("ImageNet · Linear probe") as t5:
             spec = JOBS["ImageNet"]
             gr.HTML(purpose_html(spec))
+            in_state = gr.State(None)          # the wnid-bearing path, for scoring against truth
             with gr.Row(equal_height=True):
                 with gr.Column(scale=1, elem_classes="card"):
                     dd, shown, more, _ = sample_picker("ImageNet", "Held-out ImageNet val sample")
@@ -916,16 +979,35 @@ def build_ui():
                 with gr.Column(scale=1, elem_classes="card"):
                     lb = gr.Label(num_top_classes=TOP_K, label=ARM_NAME["baseline"], elem_classes="arm arm-base")
                     lg = gr.Label(num_top_classes=TOP_K, label=ARM_NAME["ghost"], elem_classes="arm arm-ghost")
+                    gt = gr.Markdown("", elem_classes="truth")
             run = run_button()
             res = gr.Dataframe(headers=RES_HEADERS, datatype="str", interactive=False,
                                row_count=(3, "fixed"), label="Resource cost", elem_classes="card")
             note = gr.Markdown("", elem_classes="note")
-            dd.change(lambda rel: load_sample("ImageNet", rel)[:2], inputs=[dd], outputs=[img, sel])
-            img.upload(lambda p: (f"Dropped · `{os.path.basename(p)}`" if p else ""),
-                       inputs=[img], outputs=[sel])
-            run.click(run_classification, inputs=[img, backend], outputs=[lb, lg, res, note])
-            clearables.extend([(dd, None), (img, None), (sel, ""), (lb, None), (lg, None),
-                               (res, []), (note, "")])
+
+            def imagenet_pick(rel):
+                """Selecting a sample also fixes the ground truth — the label carries its wnid."""
+                path, cap, _ = load_sample("ImageNet", rel)
+                truth = dsp.imagenet_truth(rel)
+                if truth:
+                    cap += f" · true class **{truth[1]}**"
+                return path, cap, rel
+
+            def imagenet_drop(path):
+                """A dropped file only has a truth if it still sits inside its wnid folder."""
+                if not path:
+                    return "", None
+                truth = dsp.imagenet_truth(path)
+                extra = f" — inside wnid folder, true class **{truth[1]}**" if truth else \
+                        " — no wnid folder around it, so nothing to score against."
+                return f"Dropped · `{os.path.basename(path)}`{extra}", path
+
+            dd.change(imagenet_pick, inputs=[dd], outputs=[img, sel, in_state])
+            img.upload(imagenet_drop, inputs=[img], outputs=[sel, in_state])
+            run.click(run_classification, inputs=[img, backend, in_state],
+                      outputs=[lb, lg, gt, res, note])
+            clearables.extend([(dd, None), (img, None), (sel, ""), (in_state, None),
+                               (lb, None), (lg, None), (gt, ""), (res, []), (note, "")])
 
         comps = [c for c, _ in clearables]
         resets = [v for _, v in clearables]

@@ -8,10 +8,9 @@ need with --only.
     CelebA   jessicali9530/celeba-dataset    (~1.4 GB)   research use
     CASIA    debarghamitraroy/casia-webface  (~4 GB)     research use
     SCface   — access-controlled — not downloadable here (request a licence; see below)
-    imagenet — the ImageNet-1K val set for the linear-probe tab. It is the Kaggle *competition*
-               `imagenet-object-localization-challenge` (LARGE: ~155 GB archive; the val split we
-               use is ~6.4 GB). Downloaded only on explicit `--only imagenet`. If you already have
-               val on disk, set IMAGENET_VAL_DIR instead and skip the download entirely.
+    imagenet titericz/imagenet1k-val        (~6.7 GB)   ImageNet-1K *validation only*, for the
+               linear-probe tab. Downloaded only on explicit `--only imagenet`. If you already have
+               a val copy on disk, set IMAGENET_VAL_DIR instead and skip the download entirely.
 
 Setup once:
     pip install kaggle
@@ -19,15 +18,15 @@ Setup once:
     #   or export KAGGLE_USERNAME=... KAGGLE_KEY=...
 
 Usage:
-    python fetch_datasets.py                 # LFW + CelebA + CASIA (faces)
-    python fetch_datasets.py --only lfw      # just one
-    python fetch_datasets.py --only imagenet # ImageNet-1K val for the linear-probe tab (large)
+    python tools/fetch_datasets.py                 # LFW + CelebA + CASIA (faces)
+    python tools/fetch_datasets.py --only lfw      # just one
+    python tools/fetch_datasets.py --only imagenet # ImageNet-1K val for the linear-probe tab (large)
 """
 import argparse
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # repo root
 DEST = os.path.join(HERE, "datasets")
 
 KAGGLE = {
@@ -37,39 +36,41 @@ KAGGLE = {
 }
 
 
+IMAGENET_VAL = "titericz/imagenet1k-val"     # 50,000 ILSVRC2012 val JPEGs in <wnid>/ folders
+
+
 def fetch_imagenet_val(dest):
-    """ImageNet-1K val for the linear-probe tab. NOT a Kaggle dataset — the competition
-    `imagenet-object-localization-challenge` (~155 GB archive; val ≈ 6.4 GB). Prefer reusing an
-    existing copy: set IMAGENET_VAL_DIR and this is skipped entirely."""
+    """ImageNet-1K *validation only* for the linear-probe tab (~6.7 GB unzipped).
+
+    Deliberately not the Kaggle competition `imagenet-object-localization-challenge`: that ships
+    train+val as one ~155 GB archive, and the probe is only ever evaluated on val, so pulling the
+    train half would cost ~150 GB for nothing. This mirror is the same 50,000 ILSVRC2012 val images
+    laid out as `<wnid>/ILSVRC2012_val_*.JPEG`, which also hands the tab its ground truth — the
+    folder name is the class, in the sorted-wnid order the probe trained under.
+
+    Prefer reusing a copy you already have: set IMAGENET_VAL_DIR and this is skipped entirely.
+    """
     out = os.path.join(dest, "imagenet")
-    val = os.path.join(out, "ILSVRC", "Data", "CLS-LOC", "val")
+    val = os.path.join(out, "imagenet-val")
     if os.path.isdir(val) and os.listdir(val):
         print(f"[skip] imagenet: {val}/ already populated"); return
     if os.environ.get("IMAGENET_VAL_DIR"):
         print("[skip] imagenet: IMAGENET_VAL_DIR is set — the app reads val from there, no download needed.")
         return
-    print("[imagenet] This downloads the Kaggle competition "
-          "`imagenet-object-localization-challenge` — LARGE (~155 GB archive; the val split we need "
-          "is ~6.4 GB), and you must have accepted its rules on kaggle.com first.\n"
-          "           To avoid it: Ctrl-C now and either `export IMAGENET_VAL_DIR=/path/to/val` or "
-          f"drop an existing val/ folder at {val}.")
     try:
         from kaggle.api.kaggle_api_extended import KaggleApi
     except Exception:
         print("Please `pip install kaggle` and set up your token.", file=sys.stderr); sys.exit(1)
     api = KaggleApi(); api.authenticate()
     os.makedirs(out, exist_ok=True)
-    api.competition_download_files("imagenet-object-localization-challenge", path=out, quiet=False)
-    import glob
-    import zipfile
-    for z in glob.glob(os.path.join(out, "*.zip")):
-        print(f"[imagenet] unzipping {os.path.basename(z)} (this takes a while) ...")
-        with zipfile.ZipFile(z) as zf:
-            zf.extractall(out)
+    print(f"[imagenet] {IMAGENET_VAL} — validation split only, ~6.7 GB (train is not downloaded).")
+    api.dataset_download_files(IMAGENET_VAL, path=out, unzip=True, quiet=False)
     if os.path.isdir(val):
-        print(f"[ok] imagenet val -> {val}/")
+        n = sum(len(fs) for _, _, fs in os.walk(val))
+        print(f"[ok] imagenet val -> {val}/  ({n:,} files)")
     else:
-        print(f"[imagenet] archive extracted under {out}/ — expected val at {val}; check the layout.")
+        print(f"[imagenet] extracted under {out}/ — expected {val}; set IMAGENET_VAL_DIR if it "
+              "landed elsewhere.")
 
 
 def main():

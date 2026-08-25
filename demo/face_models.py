@@ -13,7 +13,8 @@ import torch.nn as nn
 
 # The bundled model files (vision_transformer.py, models_convvit.py, blocks_ghost.py) use
 # flat top-level imports of each other, so put their directory on sys.path and import flat.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "models"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "vendor", "convvit"))
 import models_convvit  # noqa: E402
 from blocks_ghost import GhostV2BlockMasked  # noqa: E402
 

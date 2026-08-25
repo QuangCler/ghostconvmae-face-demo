@@ -62,3 +62,22 @@ def infer(path, x):
     ctx.execute_async_v3(torch.cuda.current_stream().cuda_stream)
     torch.cuda.synchronize()
     return out
+
+
+def footprint(path):
+    """{'weights_MB', 'workspace_MB'} for a built engine — the memory TensorRT itself needs.
+
+    Needed because torch's allocator cannot see it. An engine holds its own weights and asks the
+    context for a scratch block; neither shows up in `torch.cuda.max_memory_allocated()`, so a
+    TensorRT row measured the torch way reports the *PyTorch* model's weights and an empty
+    activation peak, which is not what ran.
+    """
+    try:
+        engine, _ = _load(path)
+        for attr in ("device_memory_size_v2", "device_memory_size"):
+            if hasattr(engine, attr):
+                return {"weights_MB": os.path.getsize(path) / 1e6,
+                        "workspace_MB": float(getattr(engine, attr)) / 1e6}
+    except Exception:
+        pass
+    return None

@@ -5,7 +5,7 @@
     datasets/casia/prepared/val/<label:05d>/<key>.jpg     (VAL_PER_CLASS held out per identity)
 
 The identity of a record comes from its **IRHeader label**, which is the only authoritative source
-and is what the fine-tune's own prepare_casia.py used (see advice/casia_class_maps/). An earlier
+and is what the fine-tune's own prepare_casia.py used (see assets/casia_class_maps/). An earlier
 version of this script instead paired record N with line N of `train.lst` — that is wrong, and
 wrong in a way that silently corrupts every label:
 

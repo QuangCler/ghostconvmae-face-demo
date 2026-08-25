@@ -8,16 +8,16 @@
 moved, not copied, so the ~1.4 GB is not duplicated, and a file already in place is left alone —
 rerun freely after an interruption.
 
-    python split_celeba.py              # move into place
-    python split_celeba.py --copy       # keep the flat folder intact as well
-    python split_celeba.py --check      # report what would move, change nothing
+    python tools/split_celeba.py              # move into place
+    python tools/split_celeba.py --copy       # keep the flat folder intact as well
+    python tools/split_celeba.py --check      # report what would move, change nothing
 """
 import argparse
 import csv
 import shutil
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent.parent            # repo root
 CELEBA = HERE / "datasets" / "celeba"
 PARTITION = {"0": "train", "1": "test", "2": "test"}     # 1 (val) and 2 (test) are both held out
 
@@ -37,7 +37,7 @@ def main() -> None:
 
     part_csv = CELEBA / "list_eval_partition.csv"
     if not part_csv.is_file():
-        raise SystemExit(f"Missing {part_csv} — run `python fetch_datasets.py --only celeba`.")
+        raise SystemExit(f"Missing {part_csv} — run `python tools/fetch_datasets.py --only celeba`.")
     src = flat_root()
 
     with part_csv.open(newline="") as f:
@@ -72,7 +72,7 @@ def main() -> None:
         print(f"  {split}: {n:,} images -> {d}")
     if missing and not args.check:
         print("\n[warn] some images listed in the partition file were not on disk — "
-              "re-run `python fetch_datasets.py --only celeba` if the count looks wrong.")
+              "re-run `python tools/fetch_datasets.py --only celeba` if the count looks wrong.")
 
 
 if __name__ == "__main__":

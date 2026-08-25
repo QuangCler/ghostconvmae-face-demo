@@ -31,7 +31,11 @@ exported to an engine.
   top-1 subject's mugshot**, i.e. the image the model actually trained on, so you see *who* the
   number is. The 50% threshold decides the verdict wording ("predicted" vs "no confident match"),
   not whether the face appears. It is the low-res stressor (trained on mugshots, tested on
-  surveillance crops — Base Top-1 ~44%, so most crops read as low confidence).
+  surveillance crops), and `surveillance_cameras_all/` is **three populations**, which the picker
+  now labels: 1,950 **visible** crops (`cam1`–`cam5`, the report's setting) at **43.5% / 31.7%**
+  Top-1, 780 marked **`IR`** (`cam6`–`cam7`) at 13.2% / 7.1%, and 130 marked **`IR mugshot`**
+  (`cam8`) at 63.9% / 51.5%. Pooled over everything the picker offers that is 36.2% / 25.9% — the
+  model never saw infrared. Most crops therefore read as low confidence.
 - **CASIA — identity (top-5)**: pick/drop a face → top-5 identity bars plus the predicted person's
   face, taken from the train split. Held-out top-1 measured here is **90.8%** (base) / **90.5%**
   (ghost), matching the paper. Both identity tabs carry a **"Where the faces come from"** panel.
@@ -45,7 +49,8 @@ exported to an engine.
   ImageNet classes. This is the **representation-quality probe**: the backbone is **frozen** and only
   a linear head (BatchNorm→Linear) was trained for **90 epochs** on top of each **300-epoch pretrained**
   backbone — no fine-tuning. Reported linear-probe Top-1 is **64.06%** (Base) / **58.60%** (Ghost).
-  Base/Ghost only, for the reason above.
+  Base/Ghost only, for the reason above. Val images carry their wnid folder, so the panel also
+  scores each backbone against the true class (top-1 / top-5 / missed).
 
 ### What each picker offers
 
@@ -56,9 +61,9 @@ see is a fair test:
 |---|---|---|
 | CelebA | `celeba/test/` — partitions **1 (val) + 2 (test)**, 39,829 | `celeba/train/` — partition 0, 162,770 |
 | CASIA | `prepared/val/<label>/` — 2 images per identity | `prepared/train/<label>/` — the predicted face |
-| SCface | `surveillance_cameras_all/` low-res crops | `mugshot_frontal_cropped_all/` — the predicted face |
+| SCface | `surveillance_cameras_all/` — visible crops + `IR` + `IR mugshot`, labelled | `mugshot_frontal_cropped_all/` — the predicted face |
 | LFW | any photo of any of the 5,749 people | nothing; verification is open-set |
-| ImageNet | `imagenet/…/val/` — the 50,000 held-out val images | `train/` — not shipped; probe is frozen-backbone anyway |
+| ImageNet | `imagenet/imagenet-val/<wnid>/` — the 50,000 held-out val images, folder = ground truth | `train/` — not shipped; the probe's backbone is frozen anyway |
 
 Each dropdown loads 300 entries and pages in 300 more when you scroll its list to the bottom (or
 click the **Load 300 more** button under it). Embedding a whole split instead — CelebA's is ~40k —
@@ -67,8 +72,8 @@ inflates the served page from 3 MB to 24 MB, since every choice ships in the pay
 CelebA ships as one flat folder of 202,599 images; split it so the two halves are separate on disk:
 
 ```bash
-python split_celeba.py          # -> datasets/celeba/{train,test}/, per list_eval_partition.csv
-python split_celeba.py --check  # report only, change nothing
+python tools/split_celeba.py          # -> datasets/celeba/{train,test}/, per list_eval_partition.csv
+python tools/split_celeba.py --check  # report only, change nothing
 ```
 
 Files are moved rather than copied, and anything already in place is left alone, so it resumes
@@ -81,7 +86,7 @@ CASIA ships as an InsightFace RecordIO, not as JPEGs, so it must be unpacked bef
 works:
 
 ```bash
-python extract_casia_recordio.py     # -> datasets/casia/prepared/{train,val}/<label:05d>/
+python tools/extract_casia_recordio.py     # -> datasets/casia/prepared/{train,val}/<label:05d>/
 ```
 
 **A record's identity comes from its IRHeader label — never from `train.lst`.** An earlier version
@@ -99,7 +104,7 @@ long enough to cover its own index. Rerunning skips images already written, so i
 
 Class indices are named through `datasets/casia/class_order.json`, which is
 `ImageFolder(train_dir).classes` from the fine-tune run itself (kept in
-[advice/casia_class_maps/](advice/casia_class_maps/)) — no reconstruction. Folder names are the
+[assets/casia_class_maps/](assets/casia_class_maps/)) — no reconstruction. Folder names are the
 RecordIO integer labels, and they are **not contiguous**: label `09282` has only 2 images, so both
 went to val and it never reached `train/`, which is why the head is 10,571 and class index `i` maps
 to label `i` below 9282 and `i+1` from 9282 on. `sorted(os.listdir(prepared/train))` reproduces that
@@ -133,16 +138,16 @@ python -m venv venv && source venv/bin/activate        # Windows: venv\Scripts\a
 # 1) install the torch build from the table above, then:
 pip install -r requirements.txt
 pip install gdown
-python fetch_checkpoints.py         # face checkpoints (~5.5 GB) -> ./checkpoints/
+python tools/fetch_checkpoints.py         # face checkpoints (~5.5 GB) -> ./checkpoints/
 ```
 
 ## 2. (Recommended) download the original datasets — they power the in-UI picker
 
 ```bash
 pip install kaggle                  # then put your token at ~/.kaggle/kaggle.json
-python fetch_datasets.py            # LFW + CelebA + CASIA -> ./datasets/  (large!)
-python fetch_datasets.py --only lfw # just one
-python fetch_datasets.py --only imagenet   # ImageNet-1K val for the linear-probe tab (see note)
+python tools/fetch_datasets.py            # LFW + CelebA + CASIA -> ./datasets/  (large!)
+python tools/fetch_datasets.py --only lfw # just one
+python tools/fetch_datasets.py --only imagenet   # ImageNet-1K VAL ONLY (~6.7 GB) for the linear-probe tab
 ```
 Each tab's **image picker reads from `datasets/<task>/`**, so downloading a set fills that tab's
 dropdown with real samples to choose from. Without them you can still drop your own image into any
@@ -151,11 +156,16 @@ under `datasets/scface/` — e.g. the prepared `val/<id>/*` surveillance crops �
 the SCface picker).
 
 **ImageNet (linear-probe tab).** The picker reads the standard **ImageNet-1K val** set (50,000
-held-out images). `--only imagenet` pulls the Kaggle competition
-`imagenet-object-localization-challenge`, which is **large (~155 GB archive; the val split is ≈ 6.4
-GB)** and needs its rules accepted on kaggle.com. On a laptop it is usually easier to **reuse a copy
-you already have**: `export IMAGENET_VAL_DIR=/path/to/val` (a flat folder of `*.JPEG`) and skip the
-download — the tab reads straight from there. Class names come from the bundled
+held-out images). `--only imagenet` pulls **only the validation split** — the mirror
+`titericz/imagenet1k-val`, ≈ 6.7 GB — deliberately *not* the Kaggle competition
+`imagenet-object-localization-challenge`, whose single ~155 GB archive bundles a train half this
+demo never touches (the probe's backbone is frozen and is only ever evaluated on val).
+
+Images arrive as `<wnid>/ILSVRC2012_val_*.JPEG`, and **that folder name is the ground truth**:
+wnids in sorted order are exactly the class indices `ImageFolder` gave the probe at training time,
+so the tab marks each backbone ✓ top-1 / ✓ in top-5 / ✗ missed with no label file involved. A flat
+folder of `*.JPEG` also works, just without the scoring. To reuse a copy you already have, set
+`IMAGENET_VAL_DIR=/path/to/val` and skip the download entirely. Class names come from the bundled
 `imagenet_class_index.json`.
 
 ## 3. (Optional) build TensorRT engines — **on your own GTX 1650**
@@ -179,9 +189,9 @@ python -c "import tensorrt, torch; print(tensorrt.__version__, torch.cuda.get_de
 **3b. Build the engines on the GTX 1650** (takes ~1–3 min each; writes to `./engines/`):
 
 ```bash
-python build_trt.py                                  # everything: 5 tasks x 2 arms x {fp32,fp16}
-python build_trt.py --jobs ImageNet --precisions fp16    # just the linear-probe engines
-python build_trt.py --jobs CelebA LFW --precisions fp16  # or just what you need (faster)
+python tools/build_trt.py                                  # everything: 5 tasks x 2 arms x {fp32,fp16}
+python tools/build_trt.py --jobs ImageNet --precisions fp16    # just the linear-probe engines
+python tools/build_trt.py --jobs CelebA LFW --precisions fp16  # or just what you need (faster)
 ```
 
 `ImageNet` is one of the jobs (Base/Ghost linear-probe classifiers) and builds like the others; the
@@ -204,6 +214,30 @@ python app.py                       # then open http://127.0.0.1:7860
   installed, that model transparently falls back to PyTorch.
 - Force CPU: `DEMO_DEVICE=cpu python app.py` (PowerShell: `$env:DEMO_DEVICE="cpu"; python app.py`).
 
+## 5. (Optional) check the whole thing
+
+```bash
+python tools/selftest.py                                  # 5 tasks x 3 backends x 50 presses
+python tools/selftest.py --jobs CASIA --iters 10 --skip-accuracy
+```
+
+It drives the tabs' **own** "Run both models" handlers, so what it prints is what a click produces.
+For each task and backend it reports which backend each arm *actually* ran on (TensorRT falls back
+silently, and the label is the only honest record), the resource row, whether top-1 held steady
+across all iterations, and the TensorRT-vs-PyTorch agreement gate. Then it scores a held-out sample
+with each task's own metric against the number this README claims. Measured on a GTX 1650:
+
+| Task | Metric | Base | Ghost | Claimed |
+|---|---|---|---|---|
+| CelebA | mAP (400 imgs) | 0.783 | 0.780 | 0.789 / 0.778 |
+| CASIA | top-1 (400) | 91.3% | 88.8% | 90.8% / 90.5% |
+| SCface | top-1, visible cams (279) | 45.9% | 31.5% | 45.13% / 31.36% |
+| LFW | ROC-AUC (400 pairs) | 0.995 | 0.986 | 0.9921 / 0.9833 |
+| ImageNet | top-1 (400) | 66.5% | 60.3% | 64.06% / 58.60% |
+
+All 30 task/arm/backend combinations run, every engine loads, and TensorRT agrees with PyTorch on
+top-1 in every case (max probability difference 0.004 at FP16, 0.0000 at FP32).
+
 ## Latency & peak VRAM
 
 Both are measured on the **single forward that produced the prediction you are looking at** — the
@@ -219,19 +253,28 @@ demo adds no extra passes, so turning the table on costs nothing at inference ti
   instead — what a naive `max_memory_allocated()` call gives — counts the *other* cached arm and the
   CUDA context, inflating both models to roughly the same ~2 GB and hiding the very difference this
   demo exists to show. On CPU the column reads `— (CPU)`; if your NVIDIA GPU shows that, your
-  PyTorch is a CPU-only build.
+  PyTorch is a CPU-only build. On a **TensorRT** row the two columns come from the engine instead —
+  its file size and the scratch block it requests — because TensorRT keeps both outside torch's
+  allocator, so measuring an engine the PyTorch way would report the idle PyTorch copy sitting in
+  the cache rather than what actually ran.
 - **Paper A5000** — the report's **FP16, batch-32** figure from `resource_meta.json` (Base 771 /
   Ghost 609 MB). Batch 32 against batch 1 is why it is larger: use it as the reference regime, and
   use the measured column to compare the two arms on your own machine.
+
+On the **LFW** tab the latency covers the **pair**: PyTorch embeds both faces in one batch-2
+forward, and because engines are built for batch 1, the TensorRT row *sums* its two calls. Averaging
+them instead would put a per-face number beside a per-pair one and show TensorRT as ~2x faster than
+it is (measured on a GTX 1650: 66 ms PyTorch vs 47 ms TensorRT-FP16 for the pair).
 
 ## Notes
 - `casia_baseline.pth` is a freshly retrained demo checkpoint; the report's CASIA numbers are unchanged.
 - SCface checkpoints: **base = seed1** (Top-1 43.5%), **ghost = seed0** (Top-1 31.7%). *(seed0's base
   file on Drive had been clobbered to an untrained epoch-0 state, which made ConvMAE-Base output
   uniform "random" predictions; `fetch_checkpoints.py` now pins the correct seed1 file and its md5, so
-  a previously-downloaded broken copy is re-fetched.)* SCface is the low-res stressor: Base is only
-  ~44% Top-1, so its top-1 is often wrong — pick a *surveillance* crop (the tested domain) rather than
-  a high-res mugshot, and read the top-5. Predictions are subject IDs `001–130` matching the
+  a previously-downloaded broken copy is re-fetched.)* Those two figures are the **visible**
+  cameras, measured here over all 130 subjects — the same setting as the report's 45.13% / 31.36%.
+  Base's top-1 is often wrong, so read the top-5, and prefer a *visible* surveillance crop: an entry
+  marked `IR` is a different sensor the model never trained on and scores about a third as well. Predictions are subject IDs `001–130` matching the
   filename's leading number. The app also self-checks each classification checkpoint and shows a
   warning if a loaded head looks untrained, so a bad file never silently degrades to random again.
 - Preprocessing matches the fine-tune **eval transform exactly** (Resize 256 **bicubic** → CenterCrop
@@ -240,24 +283,28 @@ demo adds no extra passes, so turning the table on costs nothing at inference ti
 ## Layout
 ```
 demo_app/
-  app.py                      Gradio UI + inference (PyTorch / TensorRT backend selector)
-  dataset_paths.py            where every split lives; the only place layout is declared
-  face_models.py              base/ghost FACE model builders + checkpoint loader
-  models/                     bundled face architecture code (ConvViT, Ghost blocks)
-  linprobe_models.py          base/ghost IMAGENET linear-probe classifier builders + loader
-  linprobe/                   bundled linprobe architecture code (MAE + CLS factories, Ghost blocks)
-  imagenet_class_index.json   ImageNet-1K class index -> readable top-5 names
-  trt_backend.py              TensorRT engine loader + runtime
-
-  fetch_checkpoints.py        downloads checkpoints into checkpoints/
-  fetch_datasets.py           downloads the original datasets into datasets/ (Kaggle)
-  extract_casia_recordio.py   CASIA RecordIO -> prepared/{train,val}/<label>/
-  split_celeba.py             CelebA flat folder -> {train,test}/
-  calibrate_lfw.py            refit the LFW cosine threshold on the official pairs
-  build_trt.py                export ONNX + build TensorRT engines into engines/
-
-  resource_meta.json          reference A5000 resource numbers
-  advice/casia_class_maps/    the fine-tune's own CASIA class ordering (+ its prepare script)
-  requirements.txt  run.sh  run.bat
+  app.py                        Gradio UI + inference (PyTorch / TensorRT backend selector)
+  demo/                         the app's own library code
+    dataset_paths.py            where every split lives; the only place layout is declared
+    face_models.py              base/ghost FACE model builders + checkpoint loader
+    linprobe_models.py          base/ghost IMAGENET linear-probe builders + loader
+    trt_backend.py              TensorRT engine loader + runtime
+  vendor/                       research model code, imported flat (do not repackage)
+    convvit/                    face architecture (ConvViT, Ghost blocks)
+    linprobe/                   linprobe architecture (MAE + CLS factories, Ghost blocks)
+  tools/                        one-off scripts, run as `python tools/<name>.py`
+    fetch_checkpoints.py        downloads checkpoints into checkpoints/
+    fetch_datasets.py           downloads the original datasets into datasets/ (Kaggle)
+    extract_casia_recordio.py   CASIA RecordIO -> prepared/{train,val}/<label>/
+    split_celeba.py             CelebA flat folder -> {train,test}/
+    calibrate_lfw.py            refit the LFW cosine threshold on the official pairs
+    build_trt.py                export ONNX + build TensorRT engines into engines/
+    selftest.py                 every task x arm x backend, through the demo's own buttons
+  assets/
+    imagenet_class_index.json   ImageNet-1K class index -> readable top-5 names
+    resource_meta.json          reference A5000 resource numbers
+    casia_class_maps/           the fine-tune's own CASIA class ordering (+ its prepare script)
+  docs/LINPROBE_DEPLOY.md       four-arm linear-probe deployment on a CUDA server
+  README.md  NOTES.md  requirements.txt  run.sh  run.bat
   checkpoints/  engines/  datasets/   (populated by the scripts above)
 ```

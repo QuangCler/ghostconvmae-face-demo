@@ -5,13 +5,13 @@ Uses gdown against Google Drive — works on any normal internet connection. ~5.
 Files already present (correct size) are skipped, so it is safe to re-run.
 
     pip install gdown
-    python fetch_checkpoints.py
+    python tools/fetch_checkpoints.py
 """
 import hashlib
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # repo root
 DEST = os.path.join(HERE, "checkpoints")
 os.makedirs(DEST, exist_ok=True)
 

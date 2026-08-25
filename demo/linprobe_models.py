@@ -20,7 +20,8 @@ import torch.nn as nn
 
 # The bundled factories use flat top-level imports of each other, so put their directory on
 # sys.path and import flat (same pattern as face_models.py with models/).
-_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "linprobe")
+_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "vendor", "linprobe")
 if _DIR not in sys.path:
     sys.path.insert(0, _DIR)
 

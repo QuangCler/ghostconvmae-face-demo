@@ -14,21 +14,23 @@ not accelerated, but it is smaller/valid). Classification tasks export encoder+h
 (-> logits); LFW exports the encoder (-> 768-d embedding) for cosine verification.
 
 Requirements: an NVIDIA GPU, a CUDA build of torch, `pip install onnx tensorrt`, and the
-checkpoints fetched (python fetch_checkpoints.py). Each engine takes ~1-3 min to build.
+checkpoints fetched (python tools/fetch_checkpoints.py). Each engine takes ~1-3 min to build.
 
-    python build_trt.py                 # all jobs/arms, FP32+FP16
-    python build_trt.py --jobs CelebA LFW --precisions fp16
+    python tools/build_trt.py                 # all jobs/arms, FP32+FP16
+    python tools/build_trt.py --jobs CelebA LFW --precisions fp16
 """
 import argparse
 import os
+import sys
 
 import torch
 import torch.nn as nn
 
-from face_models import build_and_load
-import linprobe_models as clsm
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
+from demo.face_models import build_and_load  # noqa: E402
+from demo import linprobe_models as clsm     # noqa: E402
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # repo root
 CKPT = os.path.join(HERE, "checkpoints")
 ENGINES = os.path.join(HERE, "engines")
 ONNX_DIR = os.path.join(HERE, "engines", "onnx")

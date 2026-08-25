@@ -10,20 +10,22 @@ This measures where it belongs, per arm, on the 6,000 official `pairs.csv` pairs
 `lfw_thresholds.json` for the app to load. Each image is embedded once and reused across every
 pair it appears in, so the whole sweep is a few thousand forwards rather than 12,000.
 
-    python calibrate_lfw.py                 # both arms -> lfw_thresholds.json
-    python calibrate_lfw.py --limit 1000    # quick check on a subset of pairs
+    python tools/calibrate_lfw.py                 # both arms -> lfw_thresholds.json
+    python tools/calibrate_lfw.py --limit 1000    # quick check on a subset of pairs
 """
 import argparse
 import csv
 import json
 import os
+import sys
 
 import torch
 from PIL import Image
 
-import dataset_paths as dsp
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
+from demo import dataset_paths as dsp  # noqa: E402
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # repo root
 OUT = os.path.join(HERE, "lfw_thresholds.json")
 
 
@@ -31,7 +33,7 @@ def official_pairs():
     """[(path_a, path_b, is_same)] from pairs.csv: 'name,n1,n2' matched, 'n1,i,n2,j' mismatched."""
     path = os.path.join(dsp.DATASETS, "lfw", "pairs.csv")
     if not os.path.isfile(path):
-        raise SystemExit(f"Missing {path} — run `python fetch_datasets.py --only lfw`.")
+        raise SystemExit(f"Missing {path} — run `python tools/fetch_datasets.py --only lfw`.")
     root = dsp.lfw_root()
 
     def img(person, num):
