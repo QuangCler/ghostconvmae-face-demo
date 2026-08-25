@@ -32,13 +32,13 @@ exported to an engine.
   number is. The 50% threshold decides the verdict wording ("predicted" vs "no confident match"),
   not whether the face appears. It is the low-res stressor (trained on mugshots, tested on
   surveillance crops), and `surveillance_cameras_all/` is **three populations**, which the picker
-  now labels: 1,950 **visible** crops (`cam1`–`cam5`, the report's setting) at **43.5% / 31.7%**
-  Top-1, 780 marked **`IR`** (`cam6`–`cam7`) at 13.2% / 7.1%, and 130 marked **`IR mugshot`**
-  (`cam8`) at 63.9% / 51.5%. Pooled over everything the picker offers that is 36.2% / 25.9% — the
-  model never saw infrared. Most crops therefore read as low confidence.
+  now labels: 1,950 **visible** crops (`cam1`–`cam5`) — the report's setting, and the entries left
+  unmarked — 780 marked **`IR`** (`cam6`–`cam7`), and 130 marked **`IR mugshot`** (`cam8`). The
+  model never saw infrared, so a marked entry is a curiosity, not the benchmark. Most crops read as
+  low confidence either way.
 - **CASIA — identity (top-5)**: pick/drop a face → top-5 identity bars plus the predicted person's
-  face, taken from the train split. Held-out top-1 measured here is **90.8%** (base) / **90.5%**
-  (ghost), matching the paper. Both identity tabs carry a **"Where the faces come from"** panel.
+  face, taken from the train split. Paper (3 seeds): Top-1 **91.49%** (base) / **91.32%** (ghost).
+  Both identity tabs carry a **"Where the faces come from"** panel.
 - **LFW — verification**: for each side pick a **person** (type to search), then one of **their
   photos**; the two faces give a cosine similarity + same/different verdict per model. A checkbox
   limits the list to the **1,680 people with ≥2 photos** (of 5,749) — someone with a single photo
@@ -175,6 +175,11 @@ folder of `*.JPEG` also works, just without the scoring. To reuse a copy you alr
 > friend's RTX 30xx, this repo's server, …) **will fail to load on your GTX 1650**. So the demo
 > ships **no** pre-built engines — you must run `build_trt.py` **on the GTX 1650 itself**. Never
 > copy `.engine` files between different GPUs; rebuild instead.
+>
+> The version half of that bites on one machine too: **run the app with the same interpreter that
+> built the engines**. If `engines/` came from a venv on TensorRT 10 and you then start the app
+> with a system Python carrying TensorRT 11, every engine fails to deserialize at once and every
+> row falls back to PyTorch. Use `run.sh` / `run.bat`, which pick `./.venv` for you.
 
 **3a. Install TensorRT** (matching the CUDA your torch uses — e.g. cu121 from step 1):
 
@@ -202,7 +207,10 @@ export encoder+head (→ logits); LFW exports the encoder (→ 768-d embedding).
 at 1 GB so it fits the 4 GB card.
 
 **3c.** Launch the app (step 4) and pick **TensorRT (FP16)** / **(FP32)** in the backend dropdown.
-A model with no engine, or if TensorRT isn't importable, silently falls back to PyTorch.
+A model with no engine, an unimportable `tensorrt`, or an engine that will not deserialize falls
+back to PyTorch — and the **Backend** column of the resource table says so, e.g.
+`PyTorch (no engine)` or `PyTorch (TRT failed: RuntimeError)`. Read that column before reading the
+latency: a fallback is a PyTorch number sitting in a TensorRT run.
 
 ## 4. Run
 
@@ -225,18 +233,27 @@ It drives the tabs' **own** "Run both models" handlers, so what it prints is wha
 For each task and backend it reports which backend each arm *actually* ran on (TensorRT falls back
 silently, and the label is the only honest record), the resource row, whether top-1 held steady
 across all iterations, and the TensorRT-vs-PyTorch agreement gate. Then it scores a held-out sample
-with each task's own metric against the number this README claims. Measured on a GTX 1650:
+with each task's own metric against the number the report claims. The pass band is the stated
+tolerance **plus two standard errors of the subset you actually ran** — `--samples 200` on a ~64%
+top-1 carries a 3.4-point standard error of its own, so a fixed gate would fail perfectly ordinary
+draws. Measured on a GTX 1650:
 
 | Task | Metric | Base | Ghost | Claimed |
 |---|---|---|---|---|
 | CelebA | mAP (400 imgs) | 0.783 | 0.780 | 0.789 / 0.778 |
-| CASIA | top-1 (400) | 91.3% | 88.8% | 90.8% / 90.5% |
+| CASIA | top-1 (400) | 91.3% | 88.8% | 91.49% / 91.32% |
 | SCface | top-1, visible cams (279) | 45.9% | 31.5% | 45.13% / 31.36% |
 | LFW | ROC-AUC (400 pairs) | 0.995 | 0.986 | 0.9921 / 0.9833 |
 | ImageNet | top-1 (400) | 66.5% | 60.3% | 64.06% / 58.60% |
 
 All 30 task/arm/backend combinations run, every engine loads, and TensorRT agrees with PyTorch on
 top-1 in every case (max probability difference 0.004 at FP16, 0.0000 at FP32).
+
+It also gates the **Base-vs-Ghost latency ratio**, because the two arms are one network with two
+stages swapped and cannot be far apart: measured across all five tasks and all three backends the
+spread is **1.05x–1.26x**, and the check fails past 1.6x or if the two arms report different
+backends. A many-fold gap has never been the models — it is one arm quietly falling back to
+PyTorch while the other runs on an engine.
 
 ## Latency & peak VRAM
 
@@ -271,13 +288,13 @@ it is (measured on a GTX 1650: 66 ms PyTorch vs 47 ms TensorRT-FP16 for the pair
 
 ## Notes
 - `casia_baseline.pth` is a freshly retrained demo checkpoint; the report's CASIA numbers are unchanged.
-- SCface checkpoints: **base = seed1** (Top-1 43.5%), **ghost = seed0** (Top-1 31.7%). *(seed0's base
+- SCface checkpoints: **base = seed1**, **ghost = seed0** — the two seeds behind the report's
+  45.13% / 31.36% on the visible cameras. *(seed0's base
   file on Drive had been clobbered to an untrained epoch-0 state, which made ConvMAE-Base output
   uniform "random" predictions; `fetch_checkpoints.py` now pins the correct seed1 file and its md5, so
-  a previously-downloaded broken copy is re-fetched.)* Those two figures are the **visible**
-  cameras, measured here over all 130 subjects — the same setting as the report's 45.13% / 31.36%.
+  a previously-downloaded broken copy is re-fetched.)*
   Base's top-1 is often wrong, so read the top-5, and prefer a *visible* surveillance crop: an entry
-  marked `IR` is a different sensor the model never trained on and scores about a third as well. Predictions are subject IDs `001–130` matching the
+  marked `IR` is a different sensor the model never trained on. Predictions are subject IDs `001–130` matching the
   filename's leading number. The app also self-checks each classification checkpoint and shows a
   warning if a loaded head looks untrained, so a bad file never silently degrades to random again.
 - Preprocessing matches the fine-tune **eval transform exactly** (Resize 256 **bicubic** → CenterCrop

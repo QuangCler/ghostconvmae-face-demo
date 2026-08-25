@@ -49,6 +49,9 @@ from demo import dataset_paths as dsp         # noqa: E402
 from demo import trt_backend                  # noqa: E402
 
 ARMS = ("baseline", "ghost")
+# Widest Base-vs-Ghost latency ratio that is still the models talking. Across all five tasks and
+# all three backends the measured spread is 1.05x-1.26x; anything past this is a backend problem.
+PAIR_RATIO_MAX = 1.6
 BACKENDS = list(app.BACKENDS)
 JOBS = list(app.JOBS)
 
@@ -56,10 +59,10 @@ JOBS = list(app.JOBS)
 # laptop measurement may drift before the run is called a mismatch rather than noise.
 EXPECTED = {
     "CelebA":   {"metric": "mAP",   "baseline": 0.789,  "ghost": 0.778,  "tol": 0.05},
-    "CASIA":    {"metric": "top-1", "baseline": 0.908,  "ghost": 0.905,  "tol": 0.05},
-    # SCface is scored on the VISIBLE cameras: that is the report's setting, and the picker also
-    # offers the two infrared cameras (~13% / ~7%) plus the IR mugshot, which drag the pooled
-    # number down to ~36% / ~26% without saying anything about the model.
+    "CASIA":    {"metric": "top-1", "baseline": 0.9149, "ghost": 0.9132, "tol": 0.05},
+    # SCface is scored on the VISIBLE cameras: that is the report's setting. The picker also offers
+    # the two infrared cameras and the IR mugshot, neither of which the model ever trained on, so
+    # pooling them in would move the number without saying anything about the model.
     "SCface":   {"metric": "top-1 visible", "baseline": 0.4513, "ghost": 0.3136, "tol": 0.05},
     "LFW":      {"metric": "AUC",   "baseline": 0.9921, "ghost": 0.9833, "tol": 0.02},
     "ImageNet": {"metric": "top-1", "baseline": 0.6406, "ghost": 0.5860, "tol": 0.04},
@@ -107,6 +110,9 @@ def teardown():
     app._WARMED.clear()
     app._LATENCY.clear()
     trt_backend._ENGINES.clear()
+    # Also the "this engine will never load" memo: teardown is what frees the card, so a failure
+    # caused by no free memory has to be allowed to succeed on the next job.
+    trt_backend._BROKEN.clear()
     if app.CUDA:
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
@@ -278,6 +284,23 @@ def phase_a(job, iters, sample, samples=None):
                       f"min {s['min']:5.1f}  med {s['med']:5.1f}  p90 {s['p90']:5.1f}  "
                       f"max {s['max']:6.1f}  1st {s['first']:5.1f} ({s['first_excess_pct']:+.0f}%)  "
                       f"drift {s['drift_pct']:+5.1f}%{warn}")
+        # The two arms are the same network with two stages swapped, so on one backend they must
+        # land within ~20% of each other. A many-fold gap is never the model: it is one arm on an
+        # engine and the other on a PyTorch fallback (read the `ran=` labels), and worst of all a
+        # *cold* fallback, which is ~6x a warm forward on this card.
+        raws = results[backend].get("raw", {})
+        if len(raws) == 2:
+            b, g = raws["baseline"]["med"], raws["ghost"]["med"]
+            ratio = max(b, g) / min(b, g) if min(b, g) else float("inf")
+            results[backend]["pair_ratio"] = ratio
+            same = rows["baseline"]["backend"] == rows["ghost"]["backend"]
+            if ratio > PAIR_RATIO_MAX or not same:
+                why = "" if same else " — arms ran on different backends"
+                print(f"  {backend:18s} {'':8s} ⚠ BASE/GHOST LATENCY RATIO {ratio:.1f}x"
+                      f" (expected < {PAIR_RATIO_MAX}){why}")
+            else:
+                print(f"  {backend:18s} {'':8s} pair ratio {ratio:.2f}x  (both on "
+                      f"{rows['baseline']['backend']})")
         for k, v in extra.items():
             if k.startswith("face_") and not v:
                 print(f"  {backend:18s} {'':8s} ⚠ no predicted-person image resolved ({k})")
@@ -390,10 +413,21 @@ def phase_b(job, n):
         got = res[arm].get(key, float("nan"))
         want = exp[arm]
         delta = got - want
-        flag = "ok" if abs(delta) <= exp["tol"] else "MISMATCH"
+        # `tol` is the systematic allowance — a laptop's checkpoint against a 3-seed report. On top
+        # of it comes the sampling error of *this* subset, which is not negligible: `--samples 200`
+        # on a ~64% top-1 has a standard error of 3.4 points, so a fixed 4-point gate calls a
+        # perfectly ordinary draw a MISMATCH. Both arms drifting the same way in the same run is
+        # that draw, not a pipeline fault. Widen by 2 SE for the proportion metrics; mAP and AUC
+        # are rank statistics with no binomial SE, so they keep the flat tolerance.
+        n_used = res[arm].get("n_visible") or res[arm].get("n") or n
+        se = (got * (1 - got) / n_used) ** 0.5 if "top-1" in key and 0 <= got <= 1 else 0.0
+        gate = exp["tol"] + 2 * se
+        flag = "ok" if abs(delta) <= gate else "MISMATCH"
+        band = f" (gate {gate:.3f})" if se else ""
         extras = "  ".join(f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
                            for k, v in res[arm].items() if k != key)
-        print(f"  {arm:8s} {key}={got:.4f}  expected {want:.4f}  Δ{delta:+.4f}  [{flag}]   {extras}")
+        print(f"  {arm:8s} {key}={got:.4f}  expected {want:.4f}  Δ{delta:+.4f}  "
+              f"[{flag}]{band}   {extras}")
     return res
 
 

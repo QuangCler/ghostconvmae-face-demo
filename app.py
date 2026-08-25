@@ -100,8 +100,8 @@ JOBS = {
         "purpose": ("Cross-resolution identification (130 subjects) — trained on high-res mugshots, "
                     "tested on low-res surveillance crops; the stress case where Ghost's compression "
                     "costs most. Predictions are subject IDs 001–130, with the predicted mugshot."),
-        "ref": "Paper (3 seeds): Top-1 45.13% (Base) vs 31.36% (Ghost) on the visible cameras; "
-               "measured here 43.5% / 31.7% on those, 36.2% / 25.9% across the whole picker.",
+        "ref": "Paper (3 seeds): Top-1 45.13% (Base) vs 31.36% (Ghost), on the visible cameras "
+               "(`cam1`–`cam5`) — the entries the picker leaves unmarked.",
         "setup": ("Read straight from the SCface distribution as it ships — no re-foldering needed.\n\n"
                   "**Input** — `datasets/scface/surveillance_cameras_all/<id>_cam<n>_<distance>.jpg`. "
                   "The fine-tune only ever saw mugshots, so every one of these crops is unseen *and* "
@@ -109,17 +109,15 @@ JOBS = {
                   "**Predicted face** — `datasets/scface/mugshot_frontal_cropped_all/<id>_frontal.JPG`, "
                   "the high-res mugshot the model actually trained on.\n\n"
                   "**`surveillance_cameras_all/` holds three populations, not one** — worth knowing "
-                  "before reading any single result. Measured here over all 130 subjects "
-                  "(Top-1, Base / Ghost):\n\n"
-                  "| Picker entries | What it is | n | Top-1 |\n|---|---|---|---|\n"
+                  "before reading any single result:\n\n"
+                  "| Picker entries | What it is | n |\n|---|---|---|\n"
                   "| `cam1`–`cam5`, `d1`–`d3` | visible surveillance — **the report's setting** "
-                  "| 1,950 | **43.5% / 31.7%** |\n"
-                  "| marked `IR` (`cam6`, `cam7`) | infrared surveillance | 780 | 13.2% / 7.1% |\n"
-                  "| marked `IR mugshot` (`cam8`) | an IR *mugshot*, despite the folder | 130 | "
-                  "63.9% / 51.5% |\n\n"
-                  "So the paper's 45.13% / 31.36% lines up with the visible cameras; averaged over "
-                  "everything the picker offers it is 36.2% / 25.9%, because the model never saw "
-                  "infrared. Distance matters as much: Base runs 21% at `d1` against 42% at `d3`.\n\n"
+                  "| 1,950 |\n"
+                  "| marked `IR` (`cam6`, `cam7`) | infrared surveillance | 780 |\n"
+                  "| marked `IR mugshot` (`cam8`) | an IR *mugshot*, despite the folder | 130 |\n\n"
+                  "The report's number is the first row. The model never saw infrared and trained "
+                  "only on mugshots, so the two marked rows ask a different question — read one as "
+                  "a curiosity, not as the benchmark.\n\n"
                   "Either way most crops land below the 50% threshold and read as 'no confident "
                   "match' — the face is still shown, marked low confidence.")},
     "LFW": {
@@ -358,14 +356,31 @@ def infer_one(job, arm, x, backend, feats=False):
     # allocator growth, which would otherwise land entirely on the user's first click and make the
     # Base-vs-Ghost ratio meaningless. Steady-state clicks time a warmed forward only.
     wkey = (job, arm, backend, feats)
-    if wkey not in _WARMED:
-        for _ in range(_WARMUP):
-            call(x)
-        _WARMED.add(wkey)
+
+    def warm(fn):
+        if wkey not in _WARMED:
+            for _ in range(_WARMUP):
+                fn(x)
+            _WARMED.add(wkey)
+
+    # Warm-up is inside the guard, and the fallback is warmed before it is timed. Both mattered.
+    # A broken engine (wrong TensorRT version, or no room left on the card) fails on its *first*
+    # forward, which is a warm-up one — outside the guard that raised straight out of the click
+    # handler instead of falling back, breaking the promise that TensorRT is best-effort. And when
+    # the failure did land on the timed call, the old code timed `torch_call` cold: cuDNN still
+    # autotuning, several times slower than a warm forward. One arm falling back that way put a
+    # cold PyTorch number beside the other arm's warm engine number and read as a Ghost-vs-Base
+    # gap of many times, which is not a thing either model does.
     try:
+        warm(call)
         out, ms, act = timed(call)
     except Exception as e:
-        label, (out, ms, act) = f"PyTorch (TRT failed: {type(e).__name__})", timed(torch_call)
+        if call is torch_call:
+            raise
+        label, call = f"PyTorch (TRT failed: {type(e).__name__})", torch_call
+        _WARMED.discard(wkey)
+        warm(torch_call)
+        out, ms, act = timed(torch_call)
 
     # Report the median of the recent real forwards rather than the last one. A single batch-1
     # forward on a laptop GPU swings 38-77 ms with background load, which swamps the ~10% gap
@@ -1053,8 +1068,34 @@ def build_ui():
     return demo
 
 
+def _banner():
+    """Four lines naming the runtime, because the two ways this demo quietly degrades are invisible.
+
+    A CPU-only torch turns off the VRAM column and every engine; and an interpreter whose
+    `tensorrt` differs from the one that built `engines/` fails *all* of them (they are
+    version-locked), so every TensorRT row silently becomes a PyTorch row. Both look like the app
+    working. Printing the interpreter path and the two versions makes the mismatch a five-second
+    check instead of a puzzle about latency.
+    """
+    import sys
+    try:
+        import tensorrt
+        trt_v = tensorrt.__version__
+    except Exception as e:
+        trt_v = f"not importable ({type(e).__name__})"
+    n = len([f for f in os.listdir(ENGINES) if f.endswith(".engine")]) \
+        if os.path.isdir(ENGINES) else 0
+    print(f"python    {sys.executable}")
+    print(f"torch     {torch.__version__}  device={DEVICE}"
+          + (f"  {torch.cuda.get_device_name(0)}" if CUDA else ""))
+    print(f"tensorrt  {trt_v}  ({n} engine{'' if n == 1 else 's'} in engines/)")
+    if n and not CUDA:
+        print("          engines present but CUDA is off — every backend choice runs PyTorch on CPU")
+
+
 if __name__ == "__main__":
     import gradio as gr
 
+    _banner()
     _, launch_kw = _style_kwargs(gr)
     build_ui().launch(server_name="0.0.0.0", server_port=7860, **launch_kw)

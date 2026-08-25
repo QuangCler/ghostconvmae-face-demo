@@ -9,6 +9,7 @@ import os
 import torch
 
 _ENGINES = {}   # path -> (engine, context)
+_BROKEN = {}    # path -> why it will never load here; keeps a dead engine from being retried
 
 
 def available():
@@ -26,11 +27,27 @@ def engine_path(engines_dir, job, arm, prec, feats=False):
 def _load(path):
     if path in _ENGINES:
         return _ENGINES[path]
+    if path in _BROKEN:
+        raise RuntimeError(_BROKEN[path])
     import tensorrt as trt
     logger = trt.Logger(trt.Logger.ERROR)
     runtime = trt.Runtime(logger)
     with open(path, "rb") as f:
         engine = runtime.deserialize_cuda_engine(f.read())
+    if engine is None:
+        # TensorRT does not raise here — it logs to its own logger and hands back None, so the
+        # next line used to fail with a bare `'NoneType' has no attribute …` several frames from
+        # the cause. The usual cause is an engine built by a *different TensorRT version* (they
+        # are version-locked: running the demo under a stray interpreter whose `tensorrt` differs
+        # from the one that built `engines/` fails every engine at once), then a card with no room
+        # left to hold it. Cache the verdict: retrying costs ~a second and a screenful of TRT
+        # errors on every single click.
+        reason = (f"{os.path.basename(path)} will not deserialize under TensorRT "
+                  f"{trt.__version__} — engines are specific to a TensorRT version and a GPU; "
+                  "rebuild them with tools/build_trt.py, and check you are running the same "
+                  "interpreter that built them")
+        _BROKEN[path] = reason
+        raise RuntimeError(reason)
     ctx = engine.create_execution_context()
     _ENGINES[path] = (engine, ctx)
     return engine, ctx

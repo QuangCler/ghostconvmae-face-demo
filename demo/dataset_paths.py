@@ -199,12 +199,12 @@ SCFACE_IR_MUGSHOT = "cam8"            # the IR mugshot (see the distribution's m
 def _scface_test():
     """{'001 · cam1 · d1': path} — everything under `surveillance_cameras_all/`, labelled by kind.
 
-    That folder is not one population but three, and the label has to say which, because their
-    accuracy differs by a factor of four (measured on all 130 subjects, ConvMAE-Base top-1):
+    That folder is not one population but three, and the label has to say which, because the model
+    only ever trained on visible-light mugshots and the three read very differently:
 
-        cam1-cam5, distances 1-3   visible surveillance, 1,950 imgs   43.5%   <- the report's figure
-        cam6-cam7, distances 1-3   IR surveillance,        780 imgs   13.2%
-        cam8                       IR *mugshot*,           130 imgs   63.9%
+        cam1-cam5, distances 1-3   visible surveillance, 1,950 imgs   <- the report's setting
+        cam6-cam7, distances 1-3   IR surveillance,        780 imgs
+        cam8                       IR *mugshot*,           130 imgs
 
     Two file-naming traps live here. `cam8` has no distance token — it ships as `001_cam8.jpg`, one
     per subject — so an earlier `len(parts) >= 3` check dropped those 130 entries to the raw
