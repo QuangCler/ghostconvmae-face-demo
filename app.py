@@ -25,6 +25,7 @@ from PIL import Image
 from torchvision import transforms
 
 from face_models import build_and_load, embed
+import linprobe_models as clsm
 import dataset_paths as dsp
 import trt_backend
 
@@ -108,6 +109,29 @@ JOBS = {
                     f"cosine similarity between the two faces and call it the same person above "
                     f"{LFW_THRESHOLD}. Open-set: no identity here is a training class."),
         "ref": "Paper (3 seeds): ROC-AUC 0.9921 (Base) vs 0.9833 (Ghost)."},
+    "ImageNet": {
+        "task": "classification", "num_classes": 1000,
+        "title": "ImageNet-1K — Linear probe (90-ep head on the 300-ep pretrain)",
+        "dataset": "imagenet",
+        "ckpts": {"baseline": "imagenet_baseline.pth", "ghost": "imagenet_ghost.pth"},
+        "purpose": ("1000-way ImageNet classification with the backbone **frozen** — only a linear "
+                    "head (BatchNorm→Linear) was trained for 90 epochs on top of each 300-epoch "
+                    "pretrained backbone. This is the representation-quality probe: it reads the "
+                    "features as they were pretrained, without fine-tuning. The panel shows each "
+                    "backbone's top-5 classes for the chosen image."),
+        "ref": "ImageNet-1K linear-probe Top-1 (report): 64.06% (Base) vs 58.60% (Ghost).",
+        "setup": ("**Input** — the standard ImageNet-1K **validation** set (50,000 held-out images), "
+                  "which the probe never trained on. Get it with `python fetch_datasets.py --only "
+                  "imagenet` (the Kaggle `imagenet-object-localization-challenge`, val ≈ 6.4 GB), or "
+                  "point `IMAGENET_VAL_DIR` at a copy you already have. Class names come from the "
+                  "bundled `imagenet_class_index.json`.\n\n"
+                  "**Only ConvMAE-Base and Ghost+ConvMAE are shown here — the two Mamba arms "
+                  "(Ghost+ForwardMamba, Ghost+BiMamba) are deliberately excluded from this demo.** "
+                  "Their Stage-3 Mamba blocks need the CUDA-only `mamba_ssm` selective-scan kernels, "
+                  "which do not install on the target laptop GPU (a GTX 1650), and the selective-scan "
+                  "op has no ONNX/TensorRT path — so those arms can neither run in PyTorch here nor be "
+                  "exported to a TensorRT engine. They are covered in `LINPROBE_DEPLOY.md` for a "
+                  "CUDA server instead.")},
 }
 
 BACKENDS = {"PyTorch": ("pytorch", None), "TensorRT (FP16)": ("trt", "fp16"), "TensorRT (FP32)": ("trt", "fp32")}
@@ -226,7 +250,10 @@ def get_model(job, arm):
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     nc = spec["num_classes"] or _head_size(path)
-    model = build_and_load(arm, nc, path, map_location=DEVICE).to(DEVICE).eval()
+    if spec["task"] == "classification":
+        model = clsm.build_and_load_cls(arm, nc, path, map_location=DEVICE).to(DEVICE).eval()
+    else:
+        model = build_and_load(arm, nc, path, map_location=DEVICE).to(DEVICE).eval()
     try:
         head_std = float(model.head.weight.detach().float().std())
     except Exception:
@@ -470,6 +497,32 @@ def run_identity(job, image, backend):
     lg, gg, mg = res.get("ghost", ({}, [], ""))
     note = (("\n\n".join(_warn(rows)) + "\n\n") if _warn(rows) else "") + RES_NOTE
     return lb, gb, mb, lg, gg, mg, _table(rows), note
+
+
+def _classification(out):
+    """Top-5 ImageNet classes for one backbone: {class name: probability}, most confident first."""
+    probs = out.float().softmax(-1)[0].cpu()
+    v, idx = probs.topk(min(TOP_K, probs.numel()))
+    d = {}
+    for p, c in zip(v.tolist(), idx.tolist()):
+        d[dsp.class_label("ImageNet", int(c)) or f"class #{int(c)}"] = float(p)
+    return d
+
+
+def run_classification(image, backend):
+    if image is None:
+        return {}, {}, [], "Choose a sample or drop an image, then run."
+    x = PREPROC(_open(image)).unsqueeze(0).to(DEVICE)
+    labels, rows = {"baseline": {}, "ghost": {}}, []
+    for arm in ("baseline", "ghost"):
+        try:
+            out, ms, label, meta = infer_one("ImageNet", arm, x, backend)
+        except FileNotFoundError:
+            rows.append((arm, None, None, None)); continue
+        rows.append((arm, meta, ms, label))
+        labels[arm] = _classification(out)
+    note = (("\n\n".join(_warn(rows)) + "\n\n") if _warn(rows) else "") + RES_NOTE
+    return labels["baseline"], labels["ghost"], _table(rows), note
 
 
 def run_verify(image_a, image_b, backend):
@@ -849,9 +902,34 @@ def build_ui():
                                (pb, None), (phb, None), (ib, None), (selb, ""),
                                (verdict, ""), (res2, []), (note2, "")])
 
+        # -------- ImageNet (linear-probe classification; Base vs Ghost only) --------
+        with gr.Tab("ImageNet · Linear probe") as t5:
+            spec = JOBS["ImageNet"]
+            gr.HTML(purpose_html(spec))
+            with gr.Row(equal_height=True):
+                with gr.Column(scale=1, elem_classes="card"):
+                    dd, shown, more, _ = sample_picker("ImageNet", "Held-out ImageNet val sample")
+                    img = gr.Image(type="filepath", label="Input image (or drop your own)", height=300)
+                    sel = gr.Markdown("", elem_classes="selname")
+                    with gr.Accordion("Data setup · why no Mamba arms", open=False):
+                        gr.Markdown(spec["setup"], elem_classes="idmsg")
+                with gr.Column(scale=1, elem_classes="card"):
+                    lb = gr.Label(num_top_classes=TOP_K, label=ARM_NAME["baseline"], elem_classes="arm arm-base")
+                    lg = gr.Label(num_top_classes=TOP_K, label=ARM_NAME["ghost"], elem_classes="arm arm-ghost")
+            run = run_button()
+            res = gr.Dataframe(headers=RES_HEADERS, datatype="str", interactive=False,
+                               row_count=(3, "fixed"), label="Resource cost", elem_classes="card")
+            note = gr.Markdown("", elem_classes="note")
+            dd.change(lambda rel: load_sample("ImageNet", rel)[:2], inputs=[dd], outputs=[img, sel])
+            img.upload(lambda p: (f"Dropped · `{os.path.basename(p)}`" if p else ""),
+                       inputs=[img], outputs=[sel])
+            run.click(run_classification, inputs=[img, backend], outputs=[lb, lg, res, note])
+            clearables.extend([(dd, None), (img, None), (sel, ""), (lb, None), (lg, None),
+                               (res, []), (note, "")])
+
         comps = [c for c, _ in clearables]
         resets = [v for _, v in clearables]
-        for tab in (t1, t2, t3, t4):
+        for tab in (t1, t2, t3, t4, t5):
             tab.select(lambda: resets, inputs=None, outputs=comps)
 
         gr.Markdown("Reference metrics are the paper's multi-seed A5000 results; this demo runs one image "

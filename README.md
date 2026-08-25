@@ -1,20 +1,23 @@
 # GhostConvMAE — Fine-tuned Face Model Demo
 
 Interactive demo comparing the two deployed backbones — **ConvMAE-Base** vs **Ghost+ConvMAE** —
-on four face tasks, side by side. Each tab has a **short description of what the models do**, an
-**in-UI image picker** (choose a sample straight from that task's dataset, or drop your own — the
-chosen filename is shown), and the two models' predictions next to each other. You can switch the
-inference backend between **native PyTorch**
-and a **TensorRT engine** in the UI. Runs on a laptop: a small CUDA GPU (e.g. **RTX 1650, 4 GB**) or
+side by side on **four face tasks plus an ImageNet-1K linear-probe tab**. Each tab has a **short
+description of what the models do**, an **in-UI image picker** (choose a sample straight from that
+task's dataset, or drop your own — the chosen filename is shown), and the two models' predictions
+next to each other. You can switch the inference backend between **native PyTorch**
+and a **TensorRT engine** in the UI. Runs on a laptop: a small CUDA GPU (e.g. **GTX 1650, 4 GB**) or
 plain **CPU** (auto-detected). Switching tabs clears the previous tab's inputs and results.
 
-Only the two fine-tuned convolution/Transformer arms are included; the Mamba arms are not part of
-the fine-tuning demo (their CUDA-only kernels don't ship to a laptop).
+**Only the two convolution/Transformer arms (ConvMAE-Base, Ghost+ConvMAE) are shown — in every
+tab, including the linear-probe one.** The Ghost+ForwardMamba and Ghost+BiMamba arms are
+deliberately excluded from this laptop demo: their Stage-3 Mamba blocks need the CUDA-only
+`mamba_ssm` selective-scan kernels, which do not install on the target GTX 1650, and the
+selective-scan op has no ONNX/TensorRT path — so those arms can neither run in PyTorch here nor be
+exported to an engine.
 
-> **Deploying the ImageNet-1K linear-probe classifiers** (the 90-epoch linear heads on the frozen
-> 300-epoch pretrained backbones, all four arms) is documented separately in
-> **[LINPROBE_DEPLOY.md](LINPROBE_DEPLOY.md)** — baseline/ghost run through **PyTorch + TensorRT**,
-> the two Mamba arms through **PyTorch only**.
+> **The full four-arm linear-probe deployment** (all four arms, on a CUDA server) is documented
+> separately in **[LINPROBE_DEPLOY.md](LINPROBE_DEPLOY.md)** — there baseline/ghost run through
+> **PyTorch + TensorRT** and the two Mamba arms through **PyTorch only**.
 
 ## Tasks
 - **CelebA — attributes**: pick/drop a face → **every attribute the model scores above 50%**, most
@@ -38,11 +41,16 @@ the fine-tuning demo (their CUDA-only kernels don't ship to a laptop).
   can only ever form a different-person pair, so they cannot demonstrate a match. That 1,680 is the
   same count as the fine-tune's LFW head. Verification is open-set, so no LFW identity is a
   training class and any two photos are a valid test.
+- **ImageNet-1K — linear probe (top-5)**: pick/drop any image → each backbone's top-5 of the 1,000
+  ImageNet classes. This is the **representation-quality probe**: the backbone is **frozen** and only
+  a linear head (BatchNorm→Linear) was trained for **90 epochs** on top of each **300-epoch pretrained**
+  backbone — no fine-tuning. Reported linear-probe Top-1 is **64.06%** (Base) / **58.60%** (Ghost).
+  Base/Ghost only, for the reason above.
 
 ### What each picker offers
 
-[dataset_paths.py](dataset_paths.py) declares the layout per dataset. Three of the four tabs offer
-held-out data only, so what you see is a fair test:
+[dataset_paths.py](dataset_paths.py) declares the layout per dataset. All held-out data, so what you
+see is a fair test:
 
 | Task | Offered in the picker | Trained on (not offered) |
 |---|---|---|
@@ -50,6 +58,7 @@ held-out data only, so what you see is a fair test:
 | CASIA | `prepared/val/<label>/` — 2 images per identity | `prepared/train/<label>/` — the predicted face |
 | SCface | `surveillance_cameras_all/` low-res crops | `mugshot_frontal_cropped_all/` — the predicted face |
 | LFW | any photo of any of the 5,749 people | nothing; verification is open-set |
+| ImageNet | `imagenet/…/val/` — the 50,000 held-out val images | `train/` — not shipped; probe is frozen-backbone anyway |
 
 Each dropdown loads 300 entries and pages in 300 more when you scroll its list to the bottom (or
 click the **Load 300 more** button under it). Embedding a whole split instead — CelebA's is ~40k —
@@ -133,12 +142,21 @@ python fetch_checkpoints.py         # face checkpoints (~5.5 GB) -> ./checkpoint
 pip install kaggle                  # then put your token at ~/.kaggle/kaggle.json
 python fetch_datasets.py            # LFW + CelebA + CASIA -> ./datasets/  (large!)
 python fetch_datasets.py --only lfw # just one
+python fetch_datasets.py --only imagenet   # ImageNet-1K val for the linear-probe tab (see note)
 ```
 Each tab's **image picker reads from `datasets/<task>/`**, so downloading a set fills that tab's
 dropdown with real samples to choose from. Without them you can still drop your own image into any
 tab. SCface is access-controlled and is not downloaded (request a licence, then place the images
 under `datasets/scface/` — e.g. the prepared `val/<id>/*` surveillance crops — and they appear in
 the SCface picker).
+
+**ImageNet (linear-probe tab).** The picker reads the standard **ImageNet-1K val** set (50,000
+held-out images). `--only imagenet` pulls the Kaggle competition
+`imagenet-object-localization-challenge`, which is **large (~155 GB archive; the val split is ≈ 6.4
+GB)** and needs its rules accepted on kaggle.com. On a laptop it is usually easier to **reuse a copy
+you already have**: `export IMAGENET_VAL_DIR=/path/to/val` (a flat folder of `*.JPEG`) and skip the
+download — the tab reads straight from there. Class names come from the bundled
+`imagenet_class_index.json`.
 
 ## 3. (Optional) build TensorRT engines — **on your own GTX 1650**
 
@@ -161,9 +179,13 @@ python -c "import tensorrt, torch; print(tensorrt.__version__, torch.cuda.get_de
 **3b. Build the engines on the GTX 1650** (takes ~1–3 min each; writes to `./engines/`):
 
 ```bash
-python build_trt.py                                  # everything: 4 tasks x 2 arms x {fp32,fp16}
-python build_trt.py --jobs CelebA LFW --precisions fp16   # or just what you need (faster)
+python build_trt.py                                  # everything: 5 tasks x 2 arms x {fp32,fp16}
+python build_trt.py --jobs ImageNet --precisions fp16    # just the linear-probe engines
+python build_trt.py --jobs CelebA LFW --precisions fp16  # or just what you need (faster)
 ```
+
+`ImageNet` is one of the jobs (Base/Ghost linear-probe classifiers) and builds like the others; the
+Mamba arms are not a job here — they have no ONNX/TensorRT path.
 
 It prints the GPU it is building on — make sure that is your **GTX 1650**. Classification tasks
 export encoder+head (→ logits); LFW exports the encoder (→ 768-d embedding). Workspace is capped
@@ -220,9 +242,12 @@ demo adds no extra passes, so turning the table on costs nothing at inference ti
 demo_app/
   app.py                      Gradio UI + inference (PyTorch / TensorRT backend selector)
   dataset_paths.py            where every split lives; the only place layout is declared
-  face_models.py              base/ghost model builders + checkpoint loader
+  face_models.py              base/ghost FACE model builders + checkpoint loader
+  models/                     bundled face architecture code (ConvViT, Ghost blocks)
+  linprobe_models.py          base/ghost IMAGENET linear-probe classifier builders + loader
+  linprobe/                   bundled linprobe architecture code (MAE + CLS factories, Ghost blocks)
+  imagenet_class_index.json   ImageNet-1K class index -> readable top-5 names
   trt_backend.py              TensorRT engine loader + runtime
-  models/                     bundled architecture code (ConvViT, Ghost blocks)
 
   fetch_checkpoints.py        downloads checkpoints into checkpoints/
   fetch_datasets.py           downloads the original datasets into datasets/ (Kaggle)

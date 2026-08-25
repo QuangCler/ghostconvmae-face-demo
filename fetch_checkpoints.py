@@ -35,6 +35,12 @@ FILES = {
     # CASIA numbers are unchanged (they use the original 3-seed runs). Uploaded to the shared
     # finetune_result/baseline/casia/outputs/seed0_demo/ folder.
     "casia_baseline.pth":  ("15zYNKaqsLjApfmMGcbQrT37BFq3pLes9", None),
+    # ImageNet-1K linear-probe heads: 90-epoch linear probe on top of the frozen 300-epoch
+    # pretrained backbone (BatchNorm->Linear head; epoch 89 = 90th, epochs=90, blr=0.1, wd=0.0).
+    # NB: the two Drive files were provided with base/ghost labels swapped; verified by each file's
+    # own args.model (1eJal…=baseline, 1eRZ…=allghost) and pinned below so the right head loads.
+    "imagenet_baseline.pth": ("1eJal666QqcArwYFuFHstsQaZMOnEx6AA", "4cb8538b70600a73ffda49e6ea63dbf5"),
+    "imagenet_ghost.pth":    ("1eRZie7l-vIgVWe2unkQxaPwAg33QWTEz", "b1596ef269a06e68e15e832b56a98cb4"),
 }
 
 

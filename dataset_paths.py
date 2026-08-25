@@ -312,8 +312,48 @@ def locate(job, filename):
     return _identity_index(job).get(os.path.basename(filename))
 
 
+# ------------------------------------------------------------------ ImageNet (linear probe)
+def imagenet_val_dir():
+    """The ImageNet-1K validation image folder feeding the linear-probe tab's picker.
+
+    The raw Kaggle competition ships a single flat ``val/`` folder of 50,000 JPEGs. Set
+    ``IMAGENET_VAL_DIR`` to point at an existing copy and skip the ~6.4 GB re-download.
+    """
+    env = os.environ.get("IMAGENET_VAL_DIR")
+    if env and os.path.isdir(env):
+        return env
+    return _first_dir(
+        os.path.join(DATASETS, "imagenet", "ILSVRC", "Data", "CLS-LOC", "val"),
+        os.path.join(DATASETS, "imagenet", "val"),
+        os.path.join(DATASETS, "imagenet"))
+
+
+def _imagenet_test():
+    """{filename: path} of the flat ImageNet val images — the whole val set is held out (no
+    identity/class here was a training class in the sense the picker cares about; these are the
+    standard 50k val images the probe never trained on)."""
+    root = imagenet_val_dir()
+    if not root:
+        return {}
+    return {fn: os.path.join(root, fn)
+            for fn in sorted(os.listdir(root)) if fn.lower().endswith(IMG_EXTS)}
+
+
+def imagenet_class_names():
+    """{class_index: human name} from the bundled imagenet_class_index.json (sorted-wnid order,
+    the ImageFolder convention the probe trained under)."""
+    def build():
+        path = os.path.join(HERE, "imagenet_class_index.json")
+        if not os.path.exists(path):
+            return {}
+        idx = json.load(open(path))
+        return {int(k): v[1].replace("_", " ") for k, v in idx.items()}
+    return _cached("imagenet_class_names", build)
+
+
 # ------------------------------------------------------------------ public API
-_TEST = {"CelebA": _celeba_test, "CASIA": _casia_test, "SCface": _scface_test}
+_TEST = {"CelebA": _celeba_test, "CASIA": _casia_test, "SCface": _scface_test,
+         "ImageNet": _imagenet_test}
 
 
 def test_samples(job):
@@ -344,6 +384,8 @@ def class_label(job, index):
     if job == "CASIA":
         names = class_names("CASIA")
         return names[index] if 0 <= index < len(names) else None
+    if job == "ImageNet":
+        return imagenet_class_names().get(index)
     return None
 
 
@@ -372,6 +414,8 @@ def status(job):
                      "`python extract_casia_recordio.py` (it resumes) for the rest.")
         return (f"{n:,} held-out images ({CASIA_VAL_PER_CLASS}/identity) across {have:,} "
                 f"identities — none of these were trained on.{extra}")
+    if job == "ImageNet":
+        return f"{n:,} held-out ImageNet-1K val images — the probe never trained on any of them."
     src = {"CelebA": "CelebA val+test partitions (1 & 2)",
            "SCface": "surveillance crops (the model only trained on mugshots)"}[job]
     return f"{n:,} samples from the {src} — none of these were trained on."

@@ -26,6 +26,7 @@ import torch
 import torch.nn as nn
 
 from face_models import build_and_load
+import linprobe_models as clsm
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CKPT = os.path.join(HERE, "checkpoints")
@@ -37,6 +38,9 @@ JOBS = {
     "CASIA":  {"task": "identity",  "nc": None, "ck": {"baseline": "casia_baseline.pth", "ghost": "casia_ghost.pth"}},
     "SCface": {"task": "identity",  "nc": None, "ck": {"baseline": "scface_baseline.pth", "ghost": "scface_ghost.pth"}},
     "LFW":    {"task": "verification", "nc": 1680, "ck": {"baseline": "lfw_baseline.pth", "ghost": "lfw_ghost.pth"}},
+    # ImageNet-1K linear probe — base/ghost only (the Mamba arms have no ONNX/TensorRT path).
+    "ImageNet": {"task": "classification", "nc": 1000,
+                 "ck": {"baseline": "imagenet_baseline.pth", "ghost": "imagenet_ghost.pth"}},
 }
 
 
@@ -61,7 +65,10 @@ def export_onnx(job, arm):
     if not os.path.exists(path):
         print(f"[skip] {job}/{arm}: checkpoint missing ({path})"); return None
     nc = spec["nc"] or _head_size(path)
-    model = build_and_load(arm, nc, path, map_location="cpu").float().cuda().eval()
+    if spec["task"] == "classification":
+        model = clsm.build_and_load_cls(arm, nc, path, map_location="cpu").float().cuda().eval()
+    else:
+        model = build_and_load(arm, nc, path, map_location="cpu").float().cuda().eval()
     if spec["task"] == "verification":
         model = EmbedOnly(model).cuda().eval()
     os.makedirs(ONNX_DIR, exist_ok=True)
