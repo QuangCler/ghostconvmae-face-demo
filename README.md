@@ -11,6 +11,11 @@ plain **CPU** (auto-detected). Switching tabs clears the previous tab's inputs a
 Only the two fine-tuned convolution/Transformer arms are included; the Mamba arms are not part of
 the fine-tuning demo (their CUDA-only kernels don't ship to a laptop).
 
+> **Deploying the ImageNet-1K linear-probe classifiers** (the 90-epoch linear heads on the frozen
+> 300-epoch pretrained backbones, all four arms) is documented separately in
+> **[LINPROBE_DEPLOY.md](LINPROBE_DEPLOY.md)** — baseline/ghost run through **PyTorch + TensorRT**,
+> the two Mamba arms through **PyTorch only**.
+
 ## Tasks
 - **CelebA — attributes**: pick/drop a face → **every attribute the model scores above 50%**, most
   confident first. Attribute recognition is multi-label and the number of true attributes varies per
