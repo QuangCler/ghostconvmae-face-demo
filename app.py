@@ -19,7 +19,7 @@ import inspect
 import json
 import statistics
 import time
-from collections import deque
+from collections import OrderedDict, deque
 
 import numpy as np
 import torch
@@ -169,7 +169,14 @@ PREPROC = transforms.Compose([
     transforms.Resize(256, interpolation=_BICUBIC), transforms.CenterCrop(224),
     transforms.ToTensor(), transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
-_CACHE = {}
+# Least-recently-used, bounded. Ten backbones do fit on this 4 GB card — 3,447 MB allocated,
+# 3,829 MB reserved — but that leaves **0 MB free**, so a visitor who has opened all five tabs and
+# then switches the dropdown to TensorRT has no room left for an engine and is silently dropped back
+# to PyTorch. Three is the smallest bound that never thrashes *within* a press, since one press of
+# "Run both models" needs both arms of one task; it costs a reload (~2-4 s) when you come back to a
+# task whose pair has since been evicted.
+_CACHE_MAX = 3
+_CACHE = OrderedDict()
 _WARMED = set()
 _LATENCY = {}            # (job, arm, backend, feats, label) -> recent forward times, for the median
 _CELEBA_TRUTH = None     # {basename: [true attribute names]}
@@ -265,9 +272,27 @@ def _head_size(ckpt_path):
     return sd["head.weight"].shape[0]
 
 
+def _evict():
+    """Drop least-recently-used models until the cache is back within `_CACHE_MAX`.
+
+    The warm-up flags go with them: a reloaded model is cold again, and leaving `_WARMED` set would
+    send the next click straight to a timed forward on an unautotuned model — the +16% first-press
+    inflation `_WARMUP` exists to prevent. The latency history is kept, since it describes the same
+    model on the same backend either way.
+    """
+    while len(_CACHE) > _CACHE_MAX:
+        (job, arm), (model, _) = _CACHE.popitem(last=False)
+        for k in [k for k in _WARMED if k[0] == job and k[1] == arm]:
+            _WARMED.discard(k)
+        del model
+        if CUDA:
+            torch.cuda.empty_cache()
+
+
 def get_model(job, arm):
     key = (job, arm)
     if key in _CACHE:
+        _CACHE.move_to_end(key)          # most recently used
         return _CACHE[key]
     spec = JOBS[job]
     path = os.path.join(CKPT, spec["ckpts"][arm])
@@ -288,6 +313,7 @@ def get_model(job, arm):
             "weights_MB": weights_B / 1e6, "ckpt_MB": os.path.getsize(path) / 1e6,
             "head_std": head_std, "untrained": head_std is not None and head_std < _UNTRAINED_STD}
     _CACHE[key] = (model, meta)
+    _evict()
     return _CACHE[key]
 
 
