@@ -11,12 +11,15 @@ the report (Figure VI-2).
 
 ## Deployment matrix — read this first
 
-| Arm | Stage-3 block | Reference linprobe Top-1 | **Deploy pipelines** |
+| Arm | Stage-3 block | Linprobe Top-1 (report) | **Deploy pipelines** |
 |---|---|---|---|
 | **baseline** (ConvMAE-Base) | Transformer × 11 | 64.06 % | **PyTorch + TensorRT** |
 | **ghost** (Ghost + ConvMAE) | Transformer × 11 | 58.60 % | **PyTorch + TensorRT** |
-| **bimamba** (Ghost + BiMamba) | Bi-Mamba-2 × 7 + Transformer × 4 `{3,7,9,10}` | 58.60 %¹ | **PyTorch only** |
-| **forwardmamba** (Ghost + ForwardMamba) | Mamba-2 × 7 + Transformer × 4 `{3,7,9,10}` | 57.10 %¹ | **PyTorch only** |
+| **bimamba** (Ghost + BiMamba) | Bi-Mamba-2 × 7 + Transformer × 4 `{3,7,9,10}` | 56.90 % | **PyTorch only** |
+| **forwardmamba** (Ghost + ForwardMamba) | Mamba-2 × 7 + Transformer × 4 `{3,7,9,10}` | 55.30 % | **PyTorch only** |
+
+Top-1 figures are the report's ImageNet-1K linear-probing results (Figure VI-2 / the main README's
+results table).
 
 **The two convolution/Transformer arms (baseline, ghost) run through both native PyTorch and a full
 TensorRT engine. The two state-space arms (bimamba, forwardmamba) run through native PyTorch only.**
@@ -26,13 +29,6 @@ mixed-pipeline rationale and Table VI-4b, where TensorRT rows exist only for bas
 deployment tool enforces this automatically: `--pipeline auto` adds TensorRT for base/ghost and stays
 on PyTorch for the Mamba arms; `--pipeline tensorrt` on a Mamba arm prints the "not supported by the
 tested export path" message and falls back to PyTorch.
-
-> ¹ **base/ghost** Top-1 are the W&B `convmae-linprobe` runs
-> (`convmae_base_lineprobe_resume90_from_ep39`, `allghost_ep300_linprobe_resume90_keep_lr`; ghost
-> logs 58.57, rounded to 58.60). **bimamba/forwardmamba** Top-1 are the 90-epoch runs whose
-> checkpoints you deploy below (`outputs/{bimamba,forwardmamba}_ep300_lin90/log.txt`,
-> "Max accuracy" 58.60 / 57.10). The report's Figure VI-2 quotes an earlier pair of Mamba probes
-> (BiMamba 56.9, ForwardMamba 55.3); deploy the checkpoint whose number you intend to cite.
 
 ## What a linprobe checkpoint contains
 
@@ -51,27 +47,34 @@ linprobe heads (`scripts/demo_deploy_infer.py`, `load_checkpoint`). Load is `str
 there are **no missing keys** — a shape/name drift fails loudly; the only unexpected keys are the
 decoder/MAE-only tensors that a classifier does not use.
 
-## Environment and files
+## Where the tool lives and how to run it
 
-The deployment tool and its per-arm CLS factories live in the research tree, **not** in this laptop
-demo (the Mamba arms are CUDA/`mamba_ssm`-only and deliberately do not ship to a laptop):
+The deployment tool and its per-arm classifier factories ship in the main repo
+[`inference-efficient-convmae`](https://github.com/QuangCler/inference-efficient-convmae) (they are
+**not** vendored into this laptop face demo — the Mamba arms are CUDA/`mamba_ssm`-only and do not
+ship to a laptop). In that repo:
 
-- **Tool:** `scripts/demo_deploy_infer.py` (also in the main repo
-  [`inference-efficient-convmae`](https://github.com/QuangCler/inference-efficient-convmae)).
-- **Model factories:** `model_convmae_cls_{baseline,ghost,bimamba,forwardmamba}.py`
+- **Tool:** `scripts/demo_deploy_infer.py` (adds the repo root to `sys.path`, so run it as
+  `python scripts/demo_deploy_infer.py …` from the repo root).
+- **Classifier factories:** `model_convmae_cls_{baseline,ghost,bimamba,forwardmamba}.py`
   (`convmae_baseline_cls` / `convmae_ghost_cls` / `convmae_bimamba_cls` / `convmae_forwardmamba_cls`,
-  each built with `num_classes=1000`), plus the shared blocks (`blocks_ghost.py`,
-  `blocks_mamba_{bidir,forward}.py`, `local_scan.py`, `conv_ffn.py`).
-- **Where it runs (reference):** the A5000 box **gpu128**, directory `/root/capstone/linprobe_cls/`,
-  virtualenv **`/root/mamba_venv2`** — **torch 2.8.0+cu128 with `mamba_ssm` and TensorRT 10.15 both
-  importable**. This is the one environment where the Mamba PyTorch path *and* the base/ghost
-  TensorRT path both work; the system Python there has `mamba_ssm` ABI-blocked, so always activate the
-  venv first.
+  each built with `num_classes=1000`). They wrap the arm's MAE factory
+  (`model_convmae_{baseline,allghost,bimamba,forwardmamba}.py`) and the shared blocks
+  (`blocks_ghost.py`, `blocks_mamba_{bidir,forward}.py`, `local_scan.py`, `conv_ffn.py`) — all already
+  in that repo.
+- **Environment:** baseline/ghost run anywhere torch runs (CPU or any CUDA GPU; TensorRT rows need a
+  TensorRT-capable GPU). The Mamba arms need `mamba_ssm` (CUDA). The reference box is **gpu128**
+  (`/root/capstone/linprobe_cls/`, venv **`/root/mamba_venv2`** — torch 2.8.0+cu128 with `mamba_ssm`
+  and TensorRT 10.15 both importable; the system Python there has `mamba_ssm` ABI-blocked, so activate
+  the venv first).
 
 Preprocessing is the ImageNet eval transform — `Resize(256) → CenterCrop(224) → ToTensor →
 Normalize(ImageNet mean/std)` — identical to how the probe was trained.
 
-## Checkpoint sources
+## Checkpoints and data
+
+**These are obtained separately — this face demo's `fetch_checkpoints.py` / `fetch_datasets.py` cover
+the *face* checkpoints and face datasets only, not the linprobe probes or ImageNet.**
 
 Point `--checkpoint` at the arm's 90-epoch probe:
 
@@ -85,6 +88,11 @@ Point `--checkpoint` at the arm's 90-epoch probe:
 The frozen backbones these probes sit on are the four 300-epoch pretrain checkpoints
 (`convmae_base_pretrain_epoch300.pt`, `allghost_epoch_300.pt`,
 `ghost_bimamba_pretrain_epoch300.pt`, `ghost_forwardmamba_pretrain_epoch300.pt`).
+
+`--images` takes an ImageNet val folder (or any image); ImageNet-1K is **not** redistributed — bring
+your own copy (the report streams it from Kaggle, see the main repo's `scripts/prepare_*.py`). For
+readable class names set `IMAGENET_CLASS_INDEX=/path/to/imagenet_class_index.json`; without it the
+top-k prints raw class indices.
 
 ## 1. PyTorch deployment — all four arms
 
