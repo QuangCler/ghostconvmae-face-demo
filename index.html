@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GhostConvMAE — demo đối chứng hai backbone</title>
+<meta name="description" content="Giải thích toàn bộ demo so sánh ConvMAE-Base và Ghost+ConvMAE trên 5 bài kiểm tra khuôn mặt: kiến trúc, cách đo, và toàn bộ số liệu.">
+<meta name="color-scheme" content="light dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  /* minimal reset — the page is served standalone, not inside a host frame */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body, h1, h2, h3, h4, p, ol, ul, figure, blockquote, pre, table { margin: 0; }
+  ol, ul { padding: 0; }
+  img { max-width: 100%; display: block; }
+</style>
+<style>
+  /* ---------- tokens: light is the bare :root, complete on its own ---------- */
+  :root {
+    --ground:      #F6F8F9;
+    --surface:     #FFFFFF;
+    --surface-sunk:#EDF1F3;
+    --ink:         #15202A;
+    --ink-soft:    #56646F;
+    --ink-faint:   #8494A0;
+    --rule:        #DBE2E7;
+    --rule-strong: #C2CDD5;
+    --base-arm:    #0E6B75;
+    --base-wash:   #E4F1F2;
+    --ghost-arm:   #9A5A16;
+    --ghost-wash:  #F6EBDD;
+    --warn:        #93262C;
+    --warn-wash:   #F8E9E9;
+    --star:        #6B4E9E;
+    --star-wash:   #EFEAF7;
+    --shadow:      0 1px 2px rgba(21,32,42,.05), 0 8px 24px -16px rgba(21,32,42,.28);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #10161B;
+      --surface:     #182029;
+      --surface-sunk:#131A21;
+      --ink:         #E3EAF0;
+      --ink-soft:    #9BA9B5;
+      --ink-faint:   #6C7C89;
+      --rule:        #28323B;
+      --rule-strong: #3A4750;
+      --base-arm:    #56C4CE;
+      --base-wash:   #10333A;
+      --ghost-arm:   #E2A75E;
+      --ghost-wash:  #362713;
+      --warn:        #EE8B87;
+      --warn-wash:   #38201F;
+      --star:        #B9A2E8;
+      --star-wash:   #251E36;
+      --shadow:      0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:      #10161B;
+    --surface:     #182029;
+    --surface-sunk:#131A21;
+    --ink:         #E3EAF0;
+    --ink-soft:    #9BA9B5;
+    --ink-faint:   #6C7C89;
+    --rule:        #28323B;
+    --rule-strong: #3A4750;
+    --base-arm:    #56C4CE;
+    --base-wash:   #10333A;
+    --ghost-arm:   #E2A75E;
+    --ghost-wash:  #362713;
+    --warn:        #EE8B87;
+    --warn-wash:   #38201F;
+    --star:        #B9A2E8;
+    --star-wash:   #251E36;
+    --shadow:      0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    font-size: 16.5px;
+    line-height: 1.68;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- shell ---------- */
+  .shell { max-width: 1180px; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 2.5rem) 6rem; }
+
+  .masthead {
+    padding: clamp(3rem, 8vw, 5.5rem) 0 2.25rem;
+    border-bottom: 1px solid var(--rule);
+    display: flex; flex-direction: column; gap: 1.1rem;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .74rem; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .masthead h1 {
+    font-family: Newsreader, Georgia, "Times New Roman", serif;
+    font-weight: 500; font-size: clamp(2.1rem, 5.5vw, 3.4rem);
+    line-height: 1.1; letter-spacing: -.015em; margin: 0;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-family: Newsreader, Georgia, serif;
+    font-size: clamp(1.05rem, 2.4vw, 1.25rem);
+    line-height: 1.6; color: var(--ink-soft); max-width: 60ch; margin: 0;
+  }
+
+  .arms { display: flex; flex-wrap: wrap; gap: .55rem; margin-top: .35rem; }
+  .arm-chip {
+    font-family: "IBM Plex Mono", monospace; font-size: .78rem;
+    padding: .3rem .7rem; border-radius: 2px; border: 1px solid;
+    display: inline-flex; align-items: baseline; gap: .5rem;
+  }
+  .arm-chip b { font-weight: 500; }
+  .chip-base  { color: var(--base-arm);  border-color: var(--base-arm);  background: var(--base-wash); }
+  .chip-ghost { color: var(--ghost-arm); border-color: var(--ghost-arm); background: var(--ghost-wash); }
+
+  /* ---------- two-column reading layout ---------- */
+  .layout { display: block; }
+  @media (min-width: 1040px) {
+    .layout { display: grid; grid-template-columns: 14.5rem minmax(0, 1fr); gap: 3.5rem; align-items: start; }
+    .toc { position: sticky; top: 1.75rem; max-height: calc(100vh - 3.5rem); overflow-y: auto; }
+    .toc-mobile { display: none; }
+  }
+  @media (max-width: 1039px) {
+    .toc-desktop { display: none; }
+  }
+
+  .toc { padding-top: 2.5rem; font-size: .855rem; }
+  .toc h2 {
+    font-family: "IBM Plex Mono", monospace; font-size: .7rem;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint);
+    margin: 0 0 .9rem; font-weight: 500;
+  }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .1rem; counter-reset: toc -1; }
+  .toc a {
+    display: flex; gap: .6rem; padding: .3rem .4rem .3rem 0;
+    color: var(--ink-soft); text-decoration: none; border-radius: 2px;
+    line-height: 1.35;
+  }
+  .toc a::before {
+    counter-increment: toc; content: counter(toc);
+    font-family: "IBM Plex Mono", monospace; font-size: .72rem;
+    color: var(--ink-faint); min-width: 1.2rem; text-align: right;
+    font-variant-numeric: tabular-nums; padding-top: .12rem;
+  }
+  .toc a:hover { color: var(--base-arm); }
+  .toc a:focus-visible { outline: 2px solid var(--base-arm); outline-offset: 2px; }
+
+  details.toc-mobile {
+    margin: 2rem 0 0; border: 1px solid var(--rule); border-radius: 3px;
+    background: var(--surface); padding: .85rem 1rem;
+  }
+  details.toc-mobile summary {
+    cursor: pointer; font-family: "IBM Plex Mono", monospace;
+    font-size: .74rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft);
+  }
+  details.toc-mobile .toc { padding-top: 1rem; }
+
+  main { padding-top: 2.5rem; min-width: 0; }
+
+  /* ---------- sections ---------- */
+  section { margin-bottom: 4.25rem; scroll-margin-top: 1.5rem; }
+  .sec-head { display: flex; align-items: baseline; gap: .9rem; margin-bottom: 1.4rem; padding-bottom: .7rem; border-bottom: 2px solid var(--ink); }
+  .sec-num {
+    font-family: "IBM Plex Mono", monospace; font-size: .8rem; font-weight: 500;
+    color: var(--ink-faint); font-variant-numeric: tabular-nums;
+    letter-spacing: .06em; flex: none;
+  }
+  .sec-head h2 {
+    font-family: Newsreader, Georgia, serif; font-weight: 500;
+    font-size: clamp(1.5rem, 3.4vw, 2rem); line-height: 1.2; margin: 0;
+    letter-spacing: -.012em; text-wrap: balance;
+  }
+
+  h3 {
+    font-family: Newsreader, Georgia, serif; font-weight: 600;
+    font-size: 1.22rem; line-height: 1.32; margin: 2.4rem 0 .7rem;
+    letter-spacing: -.005em; text-wrap: balance;
+  }
+  h4 {
+    font-family: "IBM Plex Sans", sans-serif; font-weight: 600;
+    font-size: .95rem; margin: 1.7rem 0 .5rem; color: var(--ink);
+  }
+  p { margin: 0 0 1rem; max-width: 68ch; }
+  main ul, main ol.body-list { max-width: 66ch; padding-left: 1.25rem; margin: 0 0 1.1rem; }
+  main li { margin-bottom: .4rem; }
+  strong { font-weight: 600; }
+  a { color: var(--base-arm); }
+
+  code, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .875em;
+  }
+  p code, li code, td code, th code {
+    background: var(--surface-sunk); padding: .1em .35em; border-radius: 2px;
+    border: 1px solid var(--rule);
+  }
+  pre {
+    background: var(--surface-sunk); border: 1px solid var(--rule);
+    border-radius: 3px; padding: .9rem 1rem; overflow-x: auto;
+    font-family: "IBM Plex Mono", monospace; font-size: .8rem; line-height: 1.55;
+    margin: 0 0 1.2rem; color: var(--ink-soft);
+  }
+
+  /* ---------- markers that encode meaning ---------- */
+  .tag {
+    font-family: "IBM Plex Mono", monospace; font-size: .66rem;
+    letter-spacing: .1em; text-transform: uppercase; font-weight: 500;
+    padding: .16rem .42rem; border-radius: 2px; vertical-align: .12em;
+    white-space: nowrap; margin-right: .45rem;
+  }
+  .tag-must { color: var(--star); background: var(--star-wash); border: 1px solid var(--star); }
+  .tag-risk { color: var(--warn); background: var(--warn-wash); border: 1px solid var(--warn); }
+
+  .callout {
+    border-left: 3px solid var(--rule-strong); background: var(--surface);
+    padding: 1rem 1.15rem; margin: 0 0 1.3rem; border-radius: 0 3px 3px 0;
+    box-shadow: var(--shadow);
+  }
+  .callout > :last-child { margin-bottom: 0; }
+  .callout p { max-width: 62ch; }
+  .callout-must { border-left-color: var(--star); }
+  .callout-risk { border-left-color: var(--warn); }
+  .callout-lead {
+    font-family: "IBM Plex Mono", monospace; font-size: .68rem;
+    letter-spacing: .12em; text-transform: uppercase; display: block;
+    margin-bottom: .5rem; color: var(--ink-faint);
+  }
+  .callout-must .callout-lead { color: var(--star); }
+  .callout-risk .callout-lead { color: var(--warn); }
+  .callout blockquote {
+    margin: 0; font-family: Newsreader, Georgia, serif; font-size: 1.08rem;
+    line-height: 1.55; color: var(--ink);
+  }
+
+  /* ---------- tables ---------- */
+  .tw { overflow-x: auto; margin: 0 0 1.5rem; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: .875rem; }
+  caption {
+    caption-side: top; text-align: left; padding: .75rem 1rem .1rem;
+    font-family: "IBM Plex Mono", monospace; font-size: .7rem;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
+  }
+  th, td { padding: .58rem .85rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--rule); }
+  thead th {
+    font-family: "IBM Plex Mono", monospace; font-weight: 500;
+    font-size: .72rem; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--ink-soft); background: var(--surface-sunk);
+    border-bottom: 1px solid var(--rule-strong); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .b { color: var(--base-arm); font-weight: 500; }
+  .g { color: var(--ghost-arm); font-weight: 500; }
+  .win { font-weight: 600; }
+
+  /* ---------- number readout ---------- */
+  .readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 3px; margin: 0 0 1.5rem; overflow: hidden; }
+  .readout { background: var(--surface); padding: 1rem 1.1rem; }
+  .readout .k { font-family: "IBM Plex Mono", monospace; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); display: block; margin-bottom: .45rem; }
+  .readout .v { font-family: "IBM Plex Mono", monospace; font-size: 1.32rem; font-variant-numeric: tabular-nums; letter-spacing: -.01em; display: block; line-height: 1.2; }
+  .readout .n { font-size: .8rem; color: var(--ink-soft); display: block; margin-top: .35rem; line-height: 1.45; }
+
+  footer { border-top: 1px solid var(--rule); margin-top: 3rem; padding-top: 1.5rem; font-size: .82rem; color: var(--ink-faint); }
+  footer p { max-width: 68ch; }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<style>
+  /* front-page additions: the link row under the masthead */
+  .linkrow { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .6rem; }
+  .linkrow a {
+    font-family: "IBM Plex Mono", monospace; font-size: .78rem;
+    padding: .42rem .8rem; border-radius: 3px;
+    border: 1px solid var(--rule-strong); background: var(--surface);
+    color: var(--ink-soft); text-decoration: none; line-height: 1.3;
+  }
+  .linkrow a:hover { border-color: var(--base-arm); color: var(--base-arm); }
+  .linkrow a:focus-visible { outline: 2px solid var(--base-arm); outline-offset: 2px; }
+  .linkrow a.primary { border-color: var(--base-arm); color: var(--base-arm); background: var(--base-wash); }
+  footer a { color: var(--base-arm); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <header class="masthead">
+    <span class="eyebrow">QuangCler / ghostconvmae-face-demo</span>
+    <h1>GhostConvMAE — demo đối chứng hai backbone</h1>
+    <p class="standfirst">Cùng một ảnh, cùng một máy, cùng một cách đo: <strong>ConvMAE-Base</strong> và <strong>Ghost+ConvMAE</strong> chạy cạnh nhau trên 5 bài kiểm tra, hiện ra dự đoán, độ trễ và bộ nhớ GPU. Trang này giải thích sản phẩm từ số 0 — không giả định người đọc biết gì về học sâu.</p>
+    <div class="arms">
+      <span class="arm-chip chip-base"><b>ConvMAE-Base</b> · bản gốc · 84,6 M</span>
+      <span class="arm-chip chip-ghost"><b>Ghost+ConvMAE</b> · bản nén · 81,2 M</span>
+    </div>
+    <div class="linkrow">
+      <a class="primary" href="https://github.com/QuangCler/ghostconvmae-face-demo">Mã nguồn trên GitHub</a>
+      <a href="https://github.com/QuangCler/ghostconvmae-face-demo#readme">Hướng dẫn cài đặt và chạy</a>
+      <a href="https://github.com/QuangCler/inference-efficient-convmae">Repo nghiên cứu gốc</a>
+    </div>
+  </header>
+
+  <details class="toc-mobile">
+    <summary>Mục lục · 9 phần</summary>
+    <nav class="toc" aria-label="Mục lục">
+      <ol>
+        <li><a href="#p0">Tóm tắt 60 giây</a></li>
+        <li><a href="#p1">Giải thích từ số 0</a></li>
+        <li><a href="#p2">Hai mô hình khác nhau ở đâu</a></li>
+        <li><a href="#p3">Ba kiểu huấn luyện</a></li>
+        <li><a href="#p4">Năm tab kiểm tra gì</a></li>
+        <li><a href="#p5">PyTorch và TensorRT</a></li>
+        <li><a href="#p6">Cách đo thời gian và bộ nhớ</a></li>
+        <li><a href="#p7">Toàn bộ số liệu</a></li>
+        <li><a href="#p8">Phần mềm tổ chức thế nào</a></li>
+      </ol>
+    </nav>
+  </details>
+
+  <div class="layout">
+    <nav class="toc toc-desktop" aria-label="Mục lục">
+      <h2>Mục lục</h2>
+      <ol>
+        <li><a href="#p0">Tóm tắt 60 giây</a></li>
+        <li><a href="#p1">Giải thích từ số 0</a></li>
+        <li><a href="#p2">Hai mô hình khác nhau ở đâu</a></li>
+        <li><a href="#p3">Ba kiểu huấn luyện</a></li>
+        <li><a href="#p4">Năm tab kiểm tra gì</a></li>
+        <li><a href="#p5">PyTorch và TensorRT</a></li>
+        <li><a href="#p6">Cách đo thời gian và bộ nhớ</a></li>
+        <li><a href="#p7">Toàn bộ số liệu</a></li>
+        <li><a href="#p8">Phần mềm tổ chức thế nào</a></li>
+      </ol>
+    </nav>
+
+    <main>
+      <!-- ============ 0 ============ -->
+      <section id="p0">
+        <div class="sec-head"><span class="sec-num">00</span><h2>Tóm tắt trong 60 giây</h2></div>
+
+        <p>Bạn có <strong>hai bộ não nhân tạo</strong> cùng làm một việc: nhìn ảnh khuôn mặt rồi trả lời câu hỏi — “người này là ai?”, “có đeo kính không?”, “hai ảnh này cùng một người chứ?”.</p>
+        <ul>
+          <li>Bộ não <span class="b">ConvMAE-Base</span> — bản gốc, đầy đủ.</li>
+          <li>Bộ não <span class="g">Ghost+ConvMAE</span> — bản đã được làm gọn bằng kỹ thuật Ghost.</li>
+        </ul>
+        <p>Câu hỏi nghiên cứu: <strong>làm gọn thì tiết kiệm được bao nhiêu, và trả giá bằng bao nhiêu độ chính xác?</strong></p>
+        <p>Demo là <strong>cái cân</strong> để trả lời câu đó cho người xem thấy tận mắt: bấm một nút, cùng một tấm ảnh chạy qua cả hai bộ não, hiện cạnh nhau <strong>dự đoán</strong>, <strong>thời gian chạy</strong> và <strong>bộ nhớ GPU</strong>. Có 5 bài kiểm tra (5 tab) và 3 chế độ chạy.</p>
+
+        <div class="callout callout-must">
+          <span class="callout-lead">Câu mở bài</span>
+          <blockquote>“Đây là công cụ đối chứng trực quan cho phần triển khai của đề tài: cùng một ảnh, cùng một máy, cùng một cách đo, hai kiến trúc chạy cạnh nhau — để người xem tự thấy đánh đổi giữa độ chính xác và chi phí, thay vì chỉ đọc bảng số trong báo cáo.”</blockquote>
+        </div>
+
+        <div class="readouts">
+          <div class="readout"><span class="k">Tham số tiết kiệm</span><span class="v">−4,0 %</span><span class="n">84,6 M → 81,2 M</span></div>
+          <div class="readout"><span class="k">VRAM tiết kiệm</span><span class="v">−21 %</span><span class="n">771 → 609 MB, A5000 FP16 batch 32</span></div>
+          <div class="readout"><span class="k">SCface Top-1</span><span class="v">45,1 → 31,4</span><span class="n">chỗ trả giá đắt nhất</span></div>
+          <div class="readout"><span class="k">Linear probe Top-1</span><span class="v">64,1 → 58,6</span><span class="n">phép so công tâm nhất</span></div>
+        </div>
+      </section>
+
+      <!-- ============ 1 ============ -->
+      <section id="p1">
+        <div class="sec-head"><span class="sec-num">01</span><h2>Giải thích từ số 0</h2></div>
+
+        <h3>Máy “nhìn” ảnh như thế nào</h3>
+        <p>Một tấm ảnh với máy tính chỉ là <strong>một bảng số</strong>. Ảnh màu 224×224 là 224 × 224 × 3 = <strong>150.528 con số</strong>, mỗi số nói điểm ảnh đó sáng, đỏ, xanh bao nhiêu.</p>
+        <p>Máy không “thấy” khuôn mặt. Nó chỉ nhân và cộng trên bảng số đó rất nhiều lần, cho tới khi bảng số khổng lồ biến thành một danh sách ngắn — ví dụ 768 con số. Danh sách ngắn đó gọi là <strong>đặc trưng</strong> hay <strong>embedding</strong>.</p>
+        <p>Hãy tưởng tượng bạn mô tả một người bạn cho người khác. Bạn không đọc từng sợi tóc; bạn nói “cao, tóc xoăn, mắt to, có nốt ruồi ở cằm”. Bốn đặc điểm đó chính là embedding mà não bạn rút ra. Máy làm y hệt, chỉ khác là 768 đặc điểm và không đặt tên được cho chúng.</p>
+
+        <h3>Backbone và head</h3>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Phần</th><th>Tên gọi</th><th>Việc của nó</th><th>Ví dụ</th></tr></thead>
+            <tbody>
+              <tr><td>Phần thân</td><td><strong>backbone</strong></td><td>biến 150.528 số thành 768 số đặc trưng</td><td>“cao, tóc xoăn, mắt to…”</td></tr>
+              <tr><td>Phần đầu</td><td><strong>head</strong></td><td>từ 768 số đó trả lời câu hỏi cụ thể</td><td>“→ đây là người số 42”</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><span class="tag tag-must">Phải thuộc</span> <strong>Backbone là phần đắt tiền và dùng chung</strong>; head thì rẻ và thay được. Cùng một backbone lắp head khác nhau cho 5 bài toán khác nhau — đúng như 5 tab của demo.</p>
+
+        <h3>Tại sao phải làm model nhẹ</h3>
+        <p>Model càng lớn càng chính xác, nhưng <strong>chạy chậm</strong> (camera an ninh cần trả lời trong vài chục mili-giây), <strong>ngốn bộ nhớ</strong> (card laptop chỉ 4 GB, không phải 48 GB như máy chủ) và <strong>tốn điện</strong>. Nên có cả một ngành nghiên cứu tên <em>inference-efficient</em>: giữ độ chính xác gần như cũ nhưng chạy rẻ hơn. Đề tài nằm ở đó.</p>
+
+        <h3>Ghost là gì</h3>
+        <p>Trong mạng nơ-ron có một hiện tượng: <strong>nhiều bản đồ đặc trưng sinh ra rất giống nhau</strong>, gần như bản sao mờ của nhau. Sinh 100 bản đồ mà 50 cái na ná nhau thì phí một nửa công.</p>
+        <ol class="body-list">
+          <li>Làm <strong>thật</strong> một nửa số bản đồ bằng phép tính đắt tiền (<code>primary_conv</code>, conv 1×1).</li>
+          <li>Nửa còn lại <strong>không tính lại từ đầu</strong> — lấy nửa đã có rồi biến đổi bằng một phép rất rẻ (<code>cheap_conv</code>, conv 3×3 depthwise).</li>
+          <li>Ghép hai nửa lại → vẫn đủ số bản đồ, chi phí giảm mạnh.</li>
+        </ol>
+        <p>Nửa “làm rẻ” đó chính là các <strong>bóng ma</strong> — tên gọi đến từ đây. Bản GhostNet<strong>V2</strong> dùng trong đề tài thêm <strong>DFC attention</strong> (hai conv dải dài 1×9 và 9×1 để mỗi điểm ảnh nhìn xa theo hàng và cột) và <strong>SE</strong> (bộ chấm điểm “kênh nào đang quan trọng” rồi nhân trọng số lên).</p>
+      </section>
+
+      <!-- ============ 2 ============ -->
+      <section id="p2">
+        <div class="sec-head"><span class="sec-num">02</span><h2>Hai mô hình khác nhau đúng ở đâu</h2></div>
+
+        <h3>Khung ConvViT ba tầng</h3>
+        <p>Cả hai <strong>dùng chung một khung</strong> tên <code>ConvViT</code>. Ảnh càng đi sâu càng nhỏ lại nhưng càng dày thông tin:</p>
+        <div class="tw">
+          <table>
+            <caption>Cấu hình: img_size [224,56,28] · patch_size [4,2,2] · embed_dim [256,384,768] · depth [2,2,11]</caption>
+            <thead><tr><th>Tầng</th><th class="num">Bản đồ</th><th class="num">Số vị trí</th><th class="num">Số chiều</th><th class="num">Số khối</th><th>Loại khối</th></tr></thead>
+            <tbody>
+              <tr><td>Stage 1</td><td class="num">56 × 56</td><td class="num">3.136</td><td class="num">256</td><td class="num">2</td><td>convolution</td></tr>
+              <tr><td>Stage 2</td><td class="num">28 × 28</td><td class="num">784</td><td class="num">384</td><td class="num">2</td><td>convolution</td></tr>
+              <tr><td>Stage 3</td><td class="num">14 × 14</td><td class="num">196</td><td class="num">768</td><td class="num">11</td><td><strong>Transformer</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Ý tưởng: <strong>tầng đầu dùng convolution</strong> — rẻ, giỏi bắt chi tiết cục bộ như cạnh và nếp nhăn; <strong>tầng cuối dùng Transformer</strong> — đắt, giỏi liên kết toàn ảnh (“mắt trái và cằm cùng thuộc một khuôn mặt”).</p>
+
+        <h3>Ghost thay đúng cái gì</h3>
+        <p><span class="tag tag-must">Phải thuộc</span> Ghost <strong>chỉ thay 4 khối ở Stage 1 và Stage 2</strong> — đổi <code>CBlock</code> thành <code>GhostV2BlockMasked</code>. <strong>Stage 3 giữ nguyên hoàn toàn.</strong></p>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Thành phần</th><th>CBlock <span class="b">(baseline)</span></th><th>GhostV2Block <span class="g">(ghost)</span></th></tr></thead>
+            <tbody>
+              <tr><td>Nhánh chính</td><td>conv 1×1 (dim → dim)</td><td>conv 1×1 (dim → <strong>dim/2</strong>)</td></tr>
+              <tr><td>Nhánh rẻ</td><td>—</td><td>conv 3×3 depthwise trên dim/2</td></tr>
+              <tr><td>Trộn không gian</td><td>conv 5×5 depthwise</td><td>DFC: conv 1×9 + 9×1 depthwise</td></tr>
+              <tr><td>Cổng chú ý</td><td>—</td><td>sigmoid(DFC) nhân vào</td></tr>
+              <tr><td>Chấm điểm kênh</td><td>—</td><td>SE (giảm 4 lần rồi phục hồi)</td></tr>
+              <tr><td><strong>MLP</strong></td><td><strong>có</strong> (nở 4 lần rồi co lại)</td><td><strong>không có</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Ước lượng tham số một khối ở số chiều <code>d</code>: CBlock ≈ <code>d²+d²+8d² ≈ 10d²</code>, GhostBlock ≈ <code>0,5d²+d²+0,5d² ≈ 2d²</code>. Khối ghost rẻ khoảng <strong>5 lần</strong>; mất nhiều nhất là <strong>MLP bị bỏ hẳn</strong>.</p>
+
+        <h3>Con số thật — và nghịch lý phải giải thích được</h3>
+        <div class="tw">
+          <table>
+            <caption>Đo trực tiếp trên checkpoint</caption>
+            <thead><tr><th>Tab</th><th class="num">Baseline</th><th class="num">Ghost</th><th class="num">Chênh</th></tr></thead>
+            <tbody>
+              <tr><td>CelebA</td><td class="num b">84,6 M / 339 MB</td><td class="num g">81,2 M / 325 MB</td><td class="num"><strong>−3,4 M (−4,0 %)</strong></td></tr>
+              <tr><td>SCface</td><td class="num b">84,7 M</td><td class="num g">81,3 M</td><td class="num">−3,4 M</td></tr>
+              <tr><td>LFW</td><td class="num b">85,9 M</td><td class="num g">82,5 M</td><td class="num">−3,4 M</td></tr>
+              <tr><td>ImageNet</td><td class="num b">89,7 M</td><td class="num g">86,3 M</td><td class="num">−3,4 M</td></tr>
+              <tr><td>CASIA</td><td class="num b">92,7 M</td><td class="num g">89,3 M</td><td class="num">−3,4 M</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Chênh lệch giữa các tab là do <strong>head</strong> khác nhau — CASIA có 10.571 lớp nên head to nhất.</p>
+
+        <div class="callout callout-risk">
+          <span class="callout-lead">Câu hỏi nguy hiểm nhất</span>
+          <p><strong>“Ghost chỉ giảm 4% tham số mà mất tới 14 điểm phần trăm trên SCface — vậy đóng góp nằm ở đâu?”</strong></p>
+        </div>
+
+        <p>Phép tính khớp chính xác với kiến trúc:</p>
+        <ul>
+          <li>Stage 1: 2 khối × 10 × 256² ≈ <strong>1,3 M</strong> → ghost ≈ 0,26 M</li>
+          <li>Stage 2: 2 khối × 10 × 384² ≈ <strong>3,0 M</strong> → ghost ≈ 0,59 M</li>
+          <li>Tiết kiệm ≈ <strong>3,4 M</strong> — đúng bằng số đo được</li>
+          <li>Stage 3: 11 khối × ~12 × 768² ≈ <strong>78 M</strong> — Ghost <strong>không đụng tới</strong></li>
+        </ul>
+        <p>Nghĩa là Ghost chỉ tác động lên ~5% khối lượng tham số. Nhưng — mấu chốt — <strong>tham số không phải thứ tốn kém ở Stage 1 và 2</strong>:</p>
+
+        <div class="callout callout-must">
+          <span class="callout-lead">Câu chốt</span>
+          <blockquote>“Stage 1 xử lý 3.136 vị trí, Stage 3 chỉ 196 — gấp 16 lần. Chi phí ở tầng đầu đến từ <strong>số vị trí phải xử lý</strong>, không phải số trọng số. Ghost tiết kiệm 4% tham số nhưng <strong>21% bộ nhớ</strong>, vì nó cắt đúng ở hai tầng có độ phân giải cao.”</blockquote>
+        </div>
+
+        <div class="tw">
+          <table>
+            <caption>Báo cáo · A5000 · FP16 · batch 32</caption>
+            <thead><tr><th>Chỉ số</th><th class="num">Baseline</th><th class="num">Ghost</th><th class="num">Chênh</th></tr></thead>
+            <tbody>
+              <tr><td>VRAM (FP16)</td><td class="num b">771 MB</td><td class="num g win">609 MB</td><td class="num"><strong>−21 %</strong></td></tr>
+              <tr><td>VRAM (FP32)</td><td class="num b">1.518 MB</td><td class="num g win">1.196 MB</td><td class="num">−21 %</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Nghịch lý thứ hai: nhanh hơn hay chậm hơn?</h3>
+        <p><span class="tag tag-risk">Dễ bị vặn</span> Hai nguồn số nói <strong>ngược nhau</strong>, phải biết trước:</p>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Nguồn</th><th>Chế độ</th><th class="num">Baseline</th><th class="num">Ghost</th><th>Kết luận</th></tr></thead>
+            <tbody>
+              <tr><td>Báo cáo · A5000 · FP16 · <strong>batch 32</strong></td><td>thông lượng</td><td class="num b">738 ảnh/s</td><td class="num g">612 ảnh/s</td><td>Ghost <strong>chậm hơn 17 %</strong></td></tr>
+              <tr><td>Demo · GTX 1650 · FP16 · <strong>batch 1</strong></td><td>độ trễ</td><td class="num b">23,0 ms</td><td class="num g">20,9 ms</td><td>Ghost <strong>nhanh hơn ~9 %</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Ghost thay các phép nhân ma trận <strong>dày</strong> — thứ GPU lớn chạy cực nhanh nhờ tensor core — bằng nhiều phép <strong>depthwise mỏng</strong> cộng SE và sigmoid. Depthwise có <strong>cường độ số học thấp</strong>: đọc/ghi bộ nhớ nhiều mà tính toán ít.</p>
+        <ul>
+          <li>Trên <strong>A5000 batch 32</strong>: GPU thừa sức tính, nút cổ chai là băng thông bộ nhớ → Ghost thua.</li>
+          <li>Trên <strong>GTX 1650 batch 1</strong>: GPU yếu, không có gì để song song hoá, nút cổ chai là số phép tính → Ghost thắng nhẹ.</li>
+        </ul>
+        <div class="callout callout-must">
+          <span class="callout-lead">Câu trả lời an toàn</span>
+          <blockquote>“Đóng góp chính của Ghost là <strong>bộ nhớ</strong>, không phải tốc độ. Tốc độ phụ thuộc chế độ chạy: có lợi ở batch nhỏ trên phần cứng yếu, bất lợi ở batch lớn trên phần cứng mạnh vì depthwise bị giới hạn băng thông. Cả hai đều là số thật, chỉ khác chế độ.”</blockquote>
+        </div>
+      </section>
+
+      <!-- ============ 3 ============ -->
+      <section id="p3">
+        <div class="sec-head"><span class="sec-num">03</span><h2>Ba kiểu huấn luyện xuất hiện trong demo</h2></div>
+
+        <h3>Pre-train bằng MAE — “học bằng cách chơi trò che ảnh”</h3>
+        <p><strong>MAE = Masked AutoEncoder.</strong> Không cần nhãn. Lấy một ảnh bất kỳ, <strong>che ngẫu nhiên 75%</strong> diện tích, bắt mô hình <strong>vẽ lại phần bị che</strong>, vẽ sai thì sửa — lặp lại hàng triệu lần (ở đây <strong>300 epoch</strong>).</p>
+        <p>Muốn vẽ lại được con mắt bị che, mô hình buộc phải “hiểu” mặt người trông ra sao. Đó là cách nó học đặc trưng mà <strong>không cần ai gán nhãn</strong>.</p>
+        <p>Trong <code>GhostV2BlockMasked</code> có tham số <code>mask</code> và ghi chú <code>bias=False</code> — chính là để phục vụ giai đoạn này: bias khác 0 sẽ làm rò rỉ thông tin từ vùng bị che sang vùng không che, khiến mô hình gian lận. Lúc chạy demo thì <code>mask=None</code> nên nhánh này không dùng tới.</p>
+
+        <h3>Fine-tune — “học nghề cụ thể”</h3>
+        <p>Lấy backbone đã pre-train, gắn head mới, rồi <strong>huấn luyện lại toàn bộ</strong> trên dữ liệu một bài toán cụ thể. Đây là cách cho kết quả tốt nhất, và là cách 4 tab khuôn mặt được tạo ra.</p>
+
+        <h3>Linear probe — “bài kiểm tra công tâm”</h3>
+        <p><strong>Đóng băng toàn bộ backbone</strong>, chỉ huấn luyện <strong>một lớp tuyến tính</strong> phía trên: <code>BatchNorm1d(768, affine=False) → Linear(768, 1000)</code>, 90 epoch.</p>
+        <div class="callout callout-must">
+          <span class="callout-lead">Vì sao quan trọng</span>
+          <p>Fine-tune có thể “chữa cháy” cho một backbone kém, vì mọi trọng số đều được sửa. Linear probe thì không — nó đo <strong>chất lượng nguyên bản của đặc trưng</strong>. Nếu đặc trưng tách lớp tốt, một đường thẳng là đủ; nếu không, không có gì cứu được.</p>
+          <p>Đây là thước đo trung thực nhất để so hai backbone, và cũng là chỗ Ghost thua rõ nhất: <span class="b">64,06 %</span> so với <span class="g">58,60 %</span>.</p>
+        </div>
+      </section>
+
+      <!-- ============ 4 ============ -->
+      <section id="p4">
+        <div class="sec-head"><span class="sec-num">04</span><h2>Năm tab, mỗi tab kiểm tra điều gì</h2></div>
+
+        <div class="tw">
+          <table>
+            <thead><tr><th>Tab</th><th>Kiểu bài</th><th>Dữ liệu</th><th>Thước đo</th><th class="num">Base</th><th class="num">Ghost</th></tr></thead>
+            <tbody>
+              <tr><td><strong>CelebA</strong></td><td>đa nhãn thuộc tính</td><td>39.829 ảnh test</td><td>mAP</td><td class="num b">0,789</td><td class="num g">0,778</td></tr>
+              <tr><td><strong>CASIA</strong></td><td>định danh tập đóng</td><td>10.571 người</td><td>Top-1</td><td class="num b">91,49 %</td><td class="num g">91,32 %</td></tr>
+              <tr><td><strong>SCface</strong></td><td>xuyên độ phân giải</td><td>130 người</td><td>Top-1</td><td class="num b">45,13 %</td><td class="num g">31,36 %</td></tr>
+              <tr><td><strong>LFW</strong></td><td>xác minh cặp</td><td>5.749 người</td><td>ROC-AUC</td><td class="num b">0,9921</td><td class="num g">0,9833</td></tr>
+              <tr><td><strong>ImageNet</strong></td><td>linear probe</td><td>50.000 ảnh val</td><td>Top-1</td><td class="num b">64,06 %</td><td class="num g">58,60 %</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>CelebA — nhận thuộc tính khuôn mặt</h3>
+        <p>Mỗi ảnh, mô hình chấm <strong>40 thuộc tính</strong> cùng lúc: “Đang cười”, “Đeo kính”, “Nam”, “Tóc vàng”… Đây là <strong>đa nhãn</strong> — một mặt có thể đúng nhiều thuộc tính cùng lúc.</p>
+        <p>Giao diện hiện <strong>mọi thuộc tính được chấm trên 50%</strong>, không phải cố định top-5, vì số thuộc tính đúng thay đổi theo từng mặt. Nếu ảnh thuộc CelebA thì có sẵn đáp án nên tab chấm điểm luôn: tỉ lệ đúng trên 40 câu, cộng <strong>F1 trên các nhãn dương</strong>.</p>
+        <p><span class="tag tag-risk">Dễ bị vặn</span> <strong>Vì sao phải có F1?</strong> Vì phần lớn thuộc tính là “không” với gần như mọi khuôn mặt (ví dụ “Đội mũ”). Một mô hình lười trả lời “không” cho tất cả vẫn đạt accuracy rất cao. F1 trên nhãn dương mới lộ ra nó có thật sự nhận được gì không.</p>
+
+        <h3>CASIA — “người này là ai” trong 10.571 người</h3>
+        <p><strong>Tập đóng</strong>: người trong ảnh chắc chắn nằm trong danh sách mà mô hình đã học.</p>
+        <div class="callout callout-risk">
+          <span class="callout-lead">Cạm bẫy lớn nhất của cả dự án</span>
+          <p>CASIA đóng gói dạng <strong>RecordIO</strong> kèm file <code>train.lst</code>. Bản đầu tiên của script giải nén ghép <strong>bản ghi thứ N</strong> với <strong>dòng thứ N</strong>. Sai, vì <code>train.idx</code> có <strong>501.196</strong> bản ghi còn <code>train.lst</code> có <strong>494.149</strong> dòng, <strong>thứ tự khác nhau</strong>.</p>
+          <p>Hai bên khớp ở đầu rồi lệch dần: đến khoá 5.000 header nói nhãn 28 còn dòng 5.000 nói 27; đến khoá 341.263 là 6.332 so với 6.285. Hậu quả: mọi ảnh bị xếp nhầm sang người bên cạnh, Top-1 rơi từ ~91% xuống <strong>1%</strong>.</p>
+          <p><strong>Sửa:</strong> danh tính lấy từ <strong>nhãn trong IRHeader của chính bản ghi</strong> — nguồn duy nhất đáng tin.</p>
+        </div>
+        <p>Còn một chi tiết tinh vi: nhãn <strong>không liên tục</strong>. Nhãn <code>09282</code> chỉ có 2 ảnh, cả hai rơi vào tập val nên thư mục <code>train/09282</code> không tồn tại. Vì thế lớp thứ <code>i</code> ứng với nhãn <code>i</code> khi <code>i &lt; 9282</code> và <code>i+1</code> từ 9282 trở đi. Thứ tự lớp lưu sẵn trong <code>assets/casia_classes.json</code>, <strong>không tái tạo bằng cách sắp xếp tên thư mục</strong>.</p>
+
+        <h3>SCface — bài khó nhất, và cái bẫy ba nhóm ảnh</h3>
+        <p>Kịch bản thực tế: cảnh sát có ảnh thẻ chụp studio, cần nhận ra người đó trên <strong>camera an ninh mờ, xa, góc xấu</strong>. Mô hình chỉ được học ảnh thẻ nhưng bị kiểm tra trên ảnh camera. Đây là bài khó nhất, và là chỗ Ghost thua đậm nhất: <span class="b">45,13 %</span> → <span class="g">31,36 %</span>.</p>
+        <p><span class="tag tag-risk">Dễ bị vặn</span> Thư mục <code>surveillance_cameras_all/</code> trông như một tập, nhưng thực ra là <strong>ba loại ảnh hoàn toàn khác nhau</strong>:</p>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Nhóm</th><th>Là gì</th><th class="num">Số ảnh</th></tr></thead>
+            <tbody>
+              <tr><td><code>cam1</code>–<code>cam5</code> × 3 khoảng cách</td><td>camera an ninh <strong>ánh sáng thường</strong> — đúng thiết lập của báo cáo</td><td class="num">1.950</td></tr>
+              <tr><td><code>cam6</code>, <code>cam7</code></td><td>camera <strong>hồng ngoại</strong> (ban đêm)</td><td class="num">780</td></tr>
+              <tr><td><code>cam8</code></td><td>ảnh <strong>thẻ</strong> chụp bằng hồng ngoại, dù nằm trong thư mục “surveillance”</td><td class="num">130</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Mô hình <strong>chưa bao giờ học ảnh hồng ngoại</strong>. Gộp cả ba nhóm để chấm điểm thì con số tụt xuống thấp hơn báo cáo và <strong>trông như một lỗi thoái lui — trong khi không phải</strong>. Demo xử lý bằng cách dán nhãn ngay trên danh sách chọn ảnh: mục nào hồng ngoại thì ghi rõ <code>IR</code> / <code>IR mugshot</code>; mục không ghi gì là ảnh thường.</p>
+        <p>Chi tiết nhỏ nhưng từng gây lỗi: file <code>cam8</code> đặt tên <code>001_cam8.jpg</code>, <strong>không có phần khoảng cách</strong>, nên đoạn kiểm tra <code>len(parts) &gt;= 3</code> đã âm thầm bỏ sót toàn bộ 130 ảnh đó.</p>
+
+        <h3>LFW — “hai ảnh này có phải cùng một người không”</h3>
+        <p>Khác hẳn ba tab trên: mô hình <strong>không đoán tên</strong>. Nó biến mỗi khuôn mặt thành một vector 768 chiều rồi đo <strong>độ tương đồng cosine</strong> — gần <code>+1</code> là cùng người, gần <code>0</code> hoặc âm là khác người.</p>
+        <p><span class="tag tag-must">Phải thuộc</span> Đây là <strong>tập mở</strong>. Không một người nào trong LFW là lớp mà mô hình đã học. Nghĩa là hệ thống xác minh được <strong>người chưa từng gặp</strong> — đúng như mở khoá điện thoại bằng khuôn mặt: máy không cần học bạn là ai trong 10.000 người, chỉ cần so bạn với ảnh đã đăng ký.</p>
+        <div class="callout callout-risk">
+          <span class="callout-lead">Chuyện về ngưỡng 0,235</span>
+          <p>Ban đầu code dùng ngưỡng mặc định <strong>0,5</strong>. Khả năng tách hai lớp rất tốt — <strong>ROC-AUC 0,9925 / 0,9809</strong> — nhưng <strong>cặp đúng vẫn bị đọc thành “khác người”</strong>: tỉ lệ bắt đúng chỉ <strong>49,5 % / 37,5 %</strong>. Hạ xuống <strong>0,235</strong> cho <strong>~95 % / ~92 %</strong> độ chính xác trên cùng mẫu.</p>
+          <p><strong>Bài học:</strong> AUC đo khả năng <em>xếp hạng</em>, không đo <em>điểm cắt</em>. Một hệ thống AUC 0,99 vẫn có thể trả lời sai gần hết nếu chọn sai ngưỡng.</p>
+        </div>
+
+        <h3>ImageNet linear probe</h3>
+        <ul>
+          <li>Ảnh val nằm trong thư mục tên <strong>wnid</strong> (ví dụ <code>n01440764</code>), và thứ tự sắp xếp của các wnid <strong>chính là chỉ số lớp</strong> mô hình đã học. Nên <strong>tên thư mục = đáp án</strong>, tab tự chấm điểm được.</li>
+          <li>Vì thế script tải bản <strong>val-only ~6,7 GB</strong> thay vì bản thi đấu ~155 GB — bản kia còn giải nén val ra dạng phẳng, mất luôn nhãn.</li>
+          <li>Head tab này là <code>Sequential(BatchNorm1d, Linear)</code> nên <strong>không có <code>model.head.weight</code></strong>; code nhận diện bằng khoá <code>head.1.*</code> và dựng lại head trước khi nạp.</li>
+        </ul>
+      </section>
+
+      <!-- ============ 5 ============ -->
+      <section id="p5">
+        <div class="sec-head"><span class="sec-num">05</span><h2>Hai chế độ chạy: PyTorch và TensorRT</h2></div>
+
+        <p><strong>PyTorch</strong> chạy mô hình theo cách tổng quát và linh hoạt: mỗi phép toán là một lệnh riêng, gọi lần lượt. Ví như <em>nấu ăn theo công thức, đọc từng dòng rồi làm từng bước</em>.</p>
+        <p><strong>TensorRT</strong> là công cụ của NVIDIA. Nó nhận mô hình rồi <strong>biên dịch trước</strong> thành một “engine” tối ưu cho <strong>đúng con GPU đó</strong>: gộp phép toán thành một kernel, đo thử để chọn thuật toán nhanh nhất cho từng lớp, hạ độ chính xác xuống FP16 nếu cho phép. Ví như <em>thuê đầu bếp học thuộc món đó, tối ưu từng động tác cho đúng căn bếp của bạn</em>.</p>
+
+        <div class="readouts">
+          <div class="readout"><span class="k">PyTorch</span><span class="v">≈ 39 ms</span><span class="n">GTX 1650, batch 1</span></div>
+          <div class="readout"><span class="k">TensorRT FP32</span><span class="v">≈ 27 ms</span><span class="n">gộp kernel + chọn thuật toán</span></div>
+          <div class="readout"><span class="k">TensorRT FP16</span><span class="v">≈ 23 ms</span><span class="n">nhanh hơn ~1,7 lần</span></div>
+        </div>
+
+        <h3>FP32 và FP16</h3>
+        <p><strong>FP32</strong> — số thực 32 bit, chính xác cao, tốn bộ nhớ và băng thông. <strong>FP16</strong> — 16 bit, một nửa bộ nhớ, GPU hiện đại có phần cứng riêng chạy rất nhanh, đổi lại kém chính xác hơn một chút.</p>
+        <div class="callout callout-risk">
+          <span class="callout-lead">Câu chắc chắn bị hỏi</span>
+          <p><strong>“Giảm xuống FP16 có làm sai kết quả không?”</strong> — Có kiểm chứng. Bộ kiểm thử so <strong>từng dự đoán</strong> của engine với PyTorch trên cả 30 tổ hợp (5 bài × 2 mô hình × 3 backend): <strong>Top-1 khớp 100 %</strong>; chênh lệch xác suất tối đa <strong>0,004 ở FP16</strong> và <strong>0,0000 ở FP32</strong>. FP16 làm xác suất lệch ở chữ số thập phân thứ ba, <strong>không đổi câu trả lời</strong>.</p>
+        </div>
+
+        <h3>Engine không mang đi được</h3>
+        <p><span class="tag tag-risk">Dễ bị vặn</span> Một engine bị khoá chặt vào <strong>kiến trúc GPU + phiên bản TensorRT</strong> đã tạo ra nó. Chuyện thật đã gặp <strong>ngay trên cùng một máy</strong>: <code>engines/</code> dựng bằng môi trường ảo <code>./.venv</code> (TensorRT 10.16), nhưng Python hệ thống lại có <strong>TensorRT 11.2</strong> — chạy app bằng Python hệ thống thì <strong>toàn bộ 20 engine hỏng cùng lúc</strong>:</p>
+        <pre>Serialization assertion stdVersionRead == kSERIALIZATION_VERSION failed.
+Current Version: 243, Serialized Engine Version: 240</pre>
+        <p>Và một cái bẫy nữa: hàm <code>deserialize_cuda_engine</code> <strong>không báo lỗi</strong> khi lệch phiên bản — nó ghi log rồi <strong>trả về <code>None</code></strong>, khiến dòng sau chết với thông báo vô nghĩa. Code hiện đã kiểm tra <code>None</code>, báo đúng nguyên nhân, và in phiên bản interpreter/torch/tensorrt ngay lúc khởi động.</p>
+      </section>
+
+      <!-- ============ 6 ============ -->
+      <section id="p6">
+        <div class="sec-head"><span class="sec-num">06</span><h2>Demo đo thời gian và bộ nhớ như thế nào</h2></div>
+        <p>Đây là phần kỹ thuật đáng tự hào nhất, và cũng là nơi hội đồng dễ vặn “sao tin được số đó”.</p>
+
+        <h3>Warm-up — vì sao phải chạy nháp trước khi đo</h3>
+        <p>Lần chạy đầu tiên <strong>luôn chậm bất thường</strong>: cuDNN phải thử vài thuật toán rồi chọn cái nhanh nhất, và bộ cấp phát bộ nhớ GPU phải xin thêm vùng nhớ mới.</p>
+        <div class="readouts">
+          <div class="readout"><span class="k">Chạy nguội</span><span class="v">251,3 ms</span><span class="n">lần đầu, chưa autotune</span></div>
+          <div class="readout"><span class="k">Chạy đã ấm</span><span class="v">41,3 ms</span><span class="n">trung vị 20 lượt</span></div>
+          <div class="readout"><span class="k">Chênh lệch</span><span class="v">6,1 ×</span><span class="n">đây là lý do phải warm-up</span></div>
+        </div>
+        <p>Code chạy nháp <code>_WARMUP = 5</code> lần. Con số 5 cũng là kết quả đo: với 2 lần, lần bấm đầu vẫn cao hơn mức ổn định <strong>+16 %</strong>; với 5 lần chỉ còn <strong>+2 %</strong>; 10 lần không tốt thêm.</p>
+
+        <h3>Trung vị thay vì một lần đo</h3>
+        <p>Một lần chạy batch-1 trên GPU laptop dao động <strong>38–77 ms</strong> tuỳ tải nền — biên độ đó <strong>nuốt chửng</strong> khoảng cách ~10 % giữa hai mô hình. Nên bảng hiện <strong>trung vị của 7 lần chạy thật gần nhất</strong>, và <strong>không chạy thêm lượt nào</strong> ngoài lượt đã sinh ra dự đoán bạn đang xem.</p>
+
+        <h3>Đo bằng CUDA event, không phải đồng hồ tường</h3>
+        <p>GPU chạy <strong>bất đồng bộ</strong>: CPU ra lệnh xong là quay về ngay, GPU mới bắt đầu làm. Bấm đồng hồ quanh lời gọi sẽ đo nhầm thời gian <em>ra lệnh</em>, không phải thời gian <em>làm</em>. Code dùng <strong>CUDA event</strong> — hai mốc đặt trong hàng đợi của GPU.</p>
+
+        <h3>VRAM tính theo từng mô hình, không theo tiến trình</h3>
+        <p><span class="tag tag-risk">Dễ bị vặn</span> Lấy thẳng <code>max_memory_allocated()</code> của cả tiến trình sẽ bao gồm <strong>mô hình kia đang nằm trong cache</strong> và cả <strong>CUDA context</strong> → cả hai mô hình đều ra ~700 MB giống hệt nhau, <strong>xoá sạch đúng cái khác biệt mà demo sinh ra để cho thấy</strong>. Nên demo báo: <strong>trọng số của chính mô hình đó + phần kích hoạt tăng thêm của đúng lượt chạy vừa rồi</strong>.</p>
+        <p>Với dòng TensorRT còn phải làm khác nữa: TensorRT giữ trọng số và vùng nháp <strong>bên ngoài</strong> bộ cấp phát của torch, nơi <code>max_memory_allocated()</code> không nhìn thấy. Đo theo kiểu PyTorch sẽ ra “trọng số của bản PyTorch đang nằm không” và “kích hoạt gần bằng 0” — sai hoàn toàn. Code đọc <code>device_memory_size</code> của engine và kích thước file engine thay thế.</p>
+
+        <h3>Tab LFW: cộng chứ không lấy trung bình</h3>
+        <p>Tab LFW cần embedding của <strong>hai</strong> khuôn mặt. PyTorch làm một lượt <strong>batch 2</strong> → một con số cho cả cặp; TensorRT engine chỉ dựng cho batch 1 → phải chạy <strong>hai lượt batch 1</strong>.</p>
+        <p>Lấy trung bình hai lượt engine là đặt <strong>số cho một mặt</strong> cạnh <strong>số cho cả cặp</strong> → TensorRT trông nhanh gấp ~2 lần so với thực tế. Code <strong>cộng</strong> hai lượt: <span class="b">66 ms</span> (PyTorch) so với <span class="g">47 ms</span> (TensorRT FP16) cho cả cặp.</p>
+      </section>
+
+      <!-- ============ 7 ============ -->
+      <section id="p7">
+        <div class="sec-head"><span class="sec-num">07</span><h2>Toàn bộ số liệu</h2></div>
+
+        <h3>Độ chính xác</h3>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Bài</th><th>Thước đo</th><th class="num">Báo cáo Base</th><th class="num">Báo cáo Ghost</th><th class="num">Đo lại trên laptop (mẫu 400)</th></tr></thead>
+            <tbody>
+              <tr><td>CelebA</td><td>mAP</td><td class="num b">0,789</td><td class="num g">0,778</td><td class="num">0,783 / 0,780</td></tr>
+              <tr><td>CASIA</td><td>Top-1</td><td class="num b">91,49 %</td><td class="num g">91,32 %</td><td class="num">91,3 % / 88,8 %</td></tr>
+              <tr><td>SCface (camera thường)</td><td>Top-1</td><td class="num b">45,13 %</td><td class="num g">31,36 %</td><td class="num">45,9 % / 31,5 %</td></tr>
+              <tr><td>LFW</td><td>ROC-AUC</td><td class="num b">0,9921</td><td class="num g">0,9833</td><td class="num">0,995 / 0,986</td></tr>
+              <tr><td>ImageNet linear probe</td><td>Top-1</td><td class="num b">64,06 %</td><td class="num g">58,60 %</td><td class="num">66,5 % / 60,3 %</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Cột cuối là mẫu nhỏ nên có sai số lấy mẫu: 400 mẫu ở mức ~64 % có <strong>sai số chuẩn ~2,4 điểm</strong>. Bộ kiểm thử vì thế nới ngưỡng chấp nhận theo <strong>2 lần sai số chuẩn của chính mẫu đang chạy</strong>.</p>
+
+        <h3>Độ trễ — GTX 1650, batch 1, trung vị 50 lần bấm</h3>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Bài</th><th class="num">PyTorch (B / G)</th><th class="num">TensorRT FP16</th><th class="num">TensorRT FP32</th></tr></thead>
+            <tbody>
+              <tr><td>CelebA</td><td class="num">38,8 / 35,9 ms</td><td class="num">22,9 / 21,3 ms</td><td class="num">26,7 / 21,7 ms</td></tr>
+              <tr><td>CASIA</td><td class="num">40,8 / 38,6 ms</td><td class="num">23,0 / 20,8 ms</td><td class="num">27,4 / 22,2 ms</td></tr>
+              <tr><td>SCface</td><td class="num">41,2 / 37,7 ms</td><td class="num">23,0 / 20,9 ms</td><td class="num">27,2 / 22,2 ms</td></tr>
+              <tr><td>ImageNet</td><td class="num">40,3 / 37,9 ms</td><td class="num">24,0 / 21,3 ms</td><td class="num">27,6 / 22,5 ms</td></tr>
+              <tr><td>LFW <em>(cả cặp)</em></td><td class="num">66,8 / 59,8 ms</td><td class="num">47,4 / 42,5 ms</td><td class="num">53,8 / 44,6 ms</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><span class="tag tag-must">Phải thuộc</span> Tỉ lệ Base/Ghost <strong>luôn nằm trong 1,05× – 1,26×</strong> trên mọi bài và mọi backend. Bộ kiểm thử đặt ngưỡng cảnh báo ở <strong>1,6×</strong>: chênh nhiều hơn thế <strong>chắc chắn không phải do mô hình</strong>, mà do một nhánh âm thầm rơi về PyTorch.</p>
+
+        <h3>Bộ nhớ</h3>
+        <div class="tw">
+          <table>
+            <thead><tr><th>Phép đo</th><th class="num">Baseline</th><th class="num">Ghost</th></tr></thead>
+            <tbody>
+              <tr><td>Trọng số (tab CelebA)</td><td class="num b">339 MB</td><td class="num g">325 MB</td></tr>
+              <tr><td>Trọng số + kích hoạt, PyTorch batch 1</td><td class="num b">~374 MB</td><td class="num g">~352 MB</td></tr>
+              <tr><td>Dòng TensorRT FP16 (engine + vùng nháp)</td><td class="num b">~342 MB</td><td class="num g">~339 MB</td></tr>
+              <tr><td><strong>Báo cáo A5000, FP16, batch 32</strong></td><td class="num b"><strong>771 MB</strong></td><td class="num g"><strong>609 MB</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============ 8 ============ -->
+      <section id="p8">
+        <div class="sec-head"><span class="sec-num">08</span><h2>Phần mềm được tổ chức thế nào</h2></div>
+        <pre>app.py            Giao diện Gradio + toàn bộ logic suy luận
+demo/             Thư viện riêng của demo
+  dataset_paths.py   khai báo dữ liệu nằm ở đâu (không đoán mò)
+  face_models.py     dựng ConvViT cho 4 tab khuôn mặt
+  linprobe_models.py dựng mạng cho tab ImageNet (khác một chút!)
+  trt_backend.py     nạp và chạy engine TensorRT
+tools/            Script chạy một lần
+  fetch_checkpoints.py  fetch_datasets.py  split_celeba.py
+  extract_casia_recordio.py  build_trt.py  calibrate_lfw.py
+  selftest.py        ← bộ kiểm thử duy nhất của dự án
+vendor/           Mã kiến trúc gốc, chép nguyên từ repo nghiên cứu
+assets/           3 file dữ liệu nhỏ app đọc lúc chạy
+engines/ checkpoints/ datasets/   ← không đưa lên git, do script tạo ra</pre>
+
+        <h3><code>JOBS</code> — một cuốn sổ điều khiển tất cả</h3>
+        <p>Toàn bộ demo chạy bằng <strong>một từ điển <code>JOBS</code> trong <code>app.py</code></strong>. Mỗi tab là một mục, khai báo loại bài, số lớp, tên file checkpoint, thư mục dữ liệu, và toàn bộ chữ hiển thị. Thêm một bài mới = thêm một mục, không phải viết lại giao diện.</p>
+
+        <h3>Chuyện gì xảy ra khi bấm “Run both models”</h3>
+        <ol class="body-list">
+          <li>Ảnh được <strong>tiền xử lý</strong>: Resize 256 (<strong>bicubic</strong>) → CenterCrop 224 → chuẩn hoá theo ImageNet.</li>
+          <li>Với mỗi mô hình, <code>infer_one()</code> chọn backend, chạy nháp nếu cần, rồi <strong>đo đúng một lượt chạy thật</strong>.</li>
+          <li>Logits → xác suất → top-5 → tra tên lớp.</li>
+          <li>Tab định danh còn đi tìm <strong>một ảnh huấn luyện của người được đoán</strong> để hiện lên.</li>
+          <li>Bảng tài nguyên được dựng: tham số, trọng số, độ trễ, VRAM, cộng dòng chênh lệch Ghost − Base.</li>
+        </ol>
+        <p><span class="tag tag-risk">Dễ bị vặn</span> <strong>Tiền xử lý phải dùng bicubic.</strong> Đổi sang bilinear từng làm tụt độ chính xác thật, nặng nhất ở SCface — vì phải khớp <strong>đúng phép biến đổi đã dùng lúc huấn luyện</strong>.</p>
+
+        <h3>Chỉ giữ một bài trên card</h3>
+        <p>Card 4 GB <strong>chứa vừa cả 10 mô hình</strong> (3.447 MB) — nhưng khi đó <strong>còn trống 0 MB</strong>, nên người xem mở hết 5 tab rồi chọn TensorRT thì không còn chỗ cho engine và bị âm thầm đẩy về PyTorch. Giải pháp: cache chỉ giữ <strong>hai nhánh của tab đang mở</strong>, đổi tab là giải phóng ngay — cả mô hình lẫn engine. Đo thực tế khi đi hết 5 tab: <strong>luôn 2 mô hình + 2 engine, còn trống 1,0–2,6 GB</strong>.</p>
+      </section>
+
+      <footer>
+        <p>Con số báo cáo là kết quả 3 seed trên A5000. Con số “đo trên laptop” lấy từ <code>tools/selftest.py</code> trên GTX 1650, batch 1, mẫu held-out 400 ảnh — dùng để đối chứng, không thay thế báo cáo.</p>
+        <p>Cài đặt, tải checkpoint và dựng engine TensorRT: xem <a href="https://github.com/QuangCler/ghostconvmae-face-demo#readme">README của repo</a>. Ghi chú kỹ thuật cho người sửa mã nằm trong <a href="https://github.com/QuangCler/ghostconvmae-face-demo/blob/main/NOTES.md">NOTES.md</a>.</p>
+      </footer>
+
+    </main>
+  </div>
+</div>
+
+</body>
+</html>

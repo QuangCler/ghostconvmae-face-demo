@@ -1,5 +1,9 @@
 # GhostConvMAE — Fine-tuned Face Model Demo
 
+> **[→ Trang giới thiệu đầy đủ (tiếng Việt)](https://quangcler.github.io/ghostconvmae-face-demo/)** — giải thích sản phẩm từ số 0: kiến trúc, ba kiểu huấn luyện, năm bài kiểm tra, cách đo độ trễ và VRAM, và toàn bộ số liệu. Nguồn: [`index.html`](index.html).
+>
+> This README is the technical setup guide; the page above is the narrative walkthrough.
+
 Interactive demo comparing the two deployed backbones — **ConvMAE-Base** vs **Ghost+ConvMAE** —
 side by side on **four face tasks plus an ImageNet-1K linear-probe tab**. Each tab has a **short
 description of what the models do**, an **in-UI image picker** (choose a sample straight from that
