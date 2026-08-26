@@ -15,9 +15,10 @@ deliberately excluded from this laptop demo: their Stage-3 Mamba blocks need the
 selective-scan op has no ONNX/TensorRT path — so those arms can neither run in PyTorch here nor be
 exported to an engine.
 
-> **The full four-arm linear-probe deployment** (all four arms, on a CUDA server) is documented
-> separately in **[LINPROBE_DEPLOY.md](LINPROBE_DEPLOY.md)** — there baseline/ghost run through
-> **PyTorch + TensorRT** and the two Mamba arms through **PyTorch only**.
+> **The full four-arm linear-probe deployment** runs on a CUDA server, not here: baseline/ghost
+> through **PyTorch + TensorRT** and the two Mamba arms through **PyTorch only**. Its tool
+> (`scripts/demo_deploy_infer.py`) and the Mamba classifier factories live in the research repo,
+> [inference-efficient-convmae](https://github.com/QuangCler/inference-efficient-convmae).
 
 ## Tasks
 - **CelebA — attributes**: pick/drop a face → **every attribute the model scores above 50%**, most
@@ -103,8 +104,9 @@ half-finished unzip leaves a **truncated `train.rec` beside the complete one** (
 long enough to cover its own index. Rerunning skips images already written, so it resumes safely.
 
 Class indices are named through `datasets/casia/class_order.json`, which is
-`ImageFolder(train_dir).classes` from the fine-tune run itself (kept in
-[assets/casia_class_maps/](assets/casia_class_maps/)) — no reconstruction. Folder names are the
+`ImageFolder(train_dir).classes` from the fine-tune run itself (a copy ships as
+[assets/casia_classes.json](assets/casia_classes.json), so the tab works before you unpack the
+dataset — one list serves both arms, whose exported orderings are byte-identical). Folder names are the
 RecordIO integer labels, and they are **not contiguous**: label `09282` has only 2 images, so both
 went to val and it never reached `train/`, which is why the head is 10,571 and class index `i` maps
 to label `i` below 9282 and `i+1` from 9282 on. `sorted(os.listdir(prepared/train))` reproduces that
@@ -327,11 +329,10 @@ demo_app/
     calibrate_lfw.py            refit the LFW cosine threshold on the official pairs
     build_trt.py                export ONNX + build TensorRT engines into engines/
     selftest.py                 every task x arm x backend, through the demo's own buttons
-  assets/
+  assets/                       small data files the app reads at run time
     imagenet_class_index.json   ImageNet-1K class index -> readable top-5 names
     resource_meta.json          reference A5000 resource numbers
-    casia_class_maps/           the fine-tune's own CASIA class ordering (+ its prepare script)
-  docs/LINPROBE_DEPLOY.md       four-arm linear-probe deployment on a CUDA server
+    casia_classes.json          the fine-tune's own CASIA class ordering
   README.md  NOTES.md  requirements.txt  run.sh  run.bat
   checkpoints/  engines/  datasets/   (populated by the scripts above)
 ```

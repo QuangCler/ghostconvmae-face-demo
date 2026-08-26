@@ -5,7 +5,8 @@
     datasets/casia/prepared/val/<label:05d>/<key>.jpg     (VAL_PER_CLASS held out per identity)
 
 The identity of a record comes from its **IRHeader label**, which is the only authoritative source
-and is what the fine-tune's own prepare_casia.py used (see assets/casia_class_maps/). An earlier
+and is what the fine-tune's own prepare script used — its resulting class ordering ships as
+assets/casia_classes.json, so this script's output can be checked against it. An earlier
 version of this script instead paired record N with line N of `train.lst` — that is wrong, and
 wrong in a way that silently corrupts every label:
 
@@ -33,7 +34,7 @@ from pathlib import Path
 _MAGIC = 0xCED7230A
 _HEADER = struct.Struct("<IfQQ")        # flag, label, id, id2
 _PREFIX = struct.Struct("<II")          # magic, lrecord
-VAL_PER_CLASS = 2                       # matches prepare_casia.py's --val_per_class default
+VAL_PER_CLASS = 2                       # matches the fine-tune prepare script's default
 
 
 def read_index(path: Path) -> list[tuple[int, int]]:

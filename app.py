@@ -152,8 +152,8 @@ JOBS = {
                   "Their Stage-3 Mamba blocks need the CUDA-only `mamba_ssm` selective-scan kernels, "
                   "which do not install on the target laptop GPU (a GTX 1650), and the selective-scan "
                   "op has no ONNX/TensorRT path — so those arms can neither run in PyTorch here nor be "
-                  "exported to a TensorRT engine. They are covered in `LINPROBE_DEPLOY.md` for a "
-                  "CUDA server instead.")},
+                  "exported to a TensorRT engine. The four-arm deployment lives in the research "
+                  "repo, `QuangCler/inference-efficient-convmae`, and runs on a CUDA server.")},
 }
 
 BACKENDS = {"PyTorch": ("pytorch", None), "TensorRT (FP16)": ("trt", "fp16"), "TensorRT (FP32)": ("trt", "fp32")}

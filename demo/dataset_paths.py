@@ -15,7 +15,7 @@ Three functions carry the whole contract:
 What counts as held-out, mirroring the fine-tune's data preparation:
 
     CelebA   list_eval_partition.csv partition 1 (val) + 2 (test); partition 0 was trained on.
-    CASIA    the first VAL_PER_CLASS images of each identity (prepare_casia.py:
+    CASIA    the first VAL_PER_CLASS images of each identity (the fine-tune's prepare script:
              `split = "val" if c < val_per_class`); images from index 2 on were trained on.
     SCface   the surveillance crops. The model only ever saw the high-res mugshots, so every
              surveillance image is out-of-domain — this is the strictest held-out set of the four.
@@ -32,7 +32,7 @@ DATASETS = os.path.join(ROOT, "datasets")
 ASSETS = os.path.join(ROOT, "assets")
 
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
-CASIA_VAL_PER_CLASS = 2          # prepare_casia.py held out the first 2 images of each identity
+CASIA_VAL_PER_CLASS = 2          # the fine-tune held out the first 2 images of each identity
 SCFACE_SUBJECTS = 130
 PAGE = 300                       # dropdown shows this many at a time and pages in more on demand
 
@@ -130,11 +130,13 @@ def _casia_classes():
     contiguous: label 09282 has only 2 images, both of which went to val, so it never reached
     train/ — class index i maps to label i below 9282 and i+1 from 9282 on.
 
-    `datasets/` is not in version control, so the copy under assets/ is the one a fresh clone gets;
-    reading it directly keeps the CASIA tab working without the dataset having to be present.
+    `datasets/` is not in version control, so `assets/casia_classes.json` is the one a fresh clone
+    gets; reading it directly keeps the CASIA tab working without the dataset having to be present.
+    One list serves both arms: both heads are [10571, 768] and the ordering depends only on the raw
+    RecordIO dump, not on which run consumed it, so the two arms' exported lists are byte-identical.
     """
     for path in (os.path.join(DATASETS, "casia", "class_order.json"),
-                 os.path.join(ASSETS, "casia_class_maps", "casia_classes_baseline.json")):
+                 os.path.join(ASSETS, "casia_classes.json")):
         if os.path.isfile(path):
             try:
                 with open(path) as f:

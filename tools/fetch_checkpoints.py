@@ -24,10 +24,10 @@ FILES = {
     "casia_ghost.pth":     ("1DeQ8YNvm4GQ1n3WIzcXwgEkJ4UAHDyTp", None),
     # SCface (cross-resolution identity, 130 classes) — the low-res stressor where Ghost's
     # compression costs most, mirroring the report's largest accuracy gap.
-    #   base  = seed1 best_checkpoint (epoch 65, Top-1 43.5%). NOTE: seed0's uploaded
-    #           best/last checkpoints were clobbered to an untrained epoch-0 state by a resume
-    #           (head std ~0.0007 -> uniform "random" output); seed1 is the correct trained file.
-    #   ghost = seed0 best_checkpoint (epoch 58, Top-1 31.7%).
+    #   base  = seed1 best_checkpoint (epoch 65). NOTE: seed0's uploaded best/last checkpoints
+    #           were clobbered to an untrained epoch-0 state by a resume (head std ~0.0007 ->
+    #           uniform "random" output); seed1 is the correct trained file.
+    #   ghost = seed0 best_checkpoint (epoch 58).
     # md5s are pinned so a previously-downloaded broken file is re-fetched instead of skipped.
     "scface_baseline.pth": ("1EHLcKQu6LMwToFuNLZSoqO_vAcITYDCR", "c6d06602f3d69772e9f5df3d57c196ac"),
     "scface_ghost.pth":    ("1n4wKYnRO5HiIXW_S1rVvOvbwYxEJ_MOa", "6223c52f1437f7d4e638156f19807d33"),
@@ -36,7 +36,11 @@ FILES = {
     # finetune_result/baseline/casia/outputs/seed0_demo/ folder.
     "casia_baseline.pth":  ("15zYNKaqsLjApfmMGcbQrT37BFq3pLes9", None),
     # ImageNet-1K linear-probe heads: 90-epoch linear probe on top of the frozen 300-epoch
-    # pretrained backbone (BatchNorm->Linear head; epoch 89 = 90th, epochs=90, blr=0.1, wd=0.0).
+    # pretrained backbone (BatchNorm->Linear head; epoch 89 = 90th, epochs=90, blr=0.1, wd=0.0,
+    # LARS, effective batch 512). Both are `best_checkpoint.pth` from the W&B project
+    # `convmae-linprobe`: base = run convmae_base_lineprobe_resume90_from_ep39,
+    # ghost = run allghost_ep300_linprobe_resume90_keep_lr. The two Mamba arms have probes too, but
+    # they are CUDA/mamba_ssm-only and are not part of this laptop demo.
     # NB: the two Drive files were provided with base/ghost labels swapped; verified by each file's
     # own args.model (1eJal…=baseline, 1eRZ…=allghost) and pinned below so the right head loads.
     "imagenet_baseline.pth": ("1eJal666QqcArwYFuFHstsQaZMOnEx6AA", "4cb8538b70600a73ffda49e6ea63dbf5"),
