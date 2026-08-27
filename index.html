@@ -320,7 +320,7 @@
         <li><a href="#p0">Tóm tắt 60 giây</a></li>
         <li><a href="#p1">Giải thích từ số 0</a></li>
         <li><a href="#p2">Hai mô hình khác nhau ở đâu</a></li>
-        <li><a href="#p3">Ba kiểu huấn luyện</a></li>
+        <li><a href="#p3">Ba kiểu huấn luyện &amp; lịch epoch</a></li>
         <li><a href="#p4">Năm tab kiểm tra gì</a></li>
         <li><a href="#p5">PyTorch và TensorRT</a></li>
         <li><a href="#p6">Cách đo thời gian và bộ nhớ</a></li>
@@ -337,7 +337,7 @@
         <li><a href="#p0">Tóm tắt 60 giây</a></li>
         <li><a href="#p1">Giải thích từ số 0</a></li>
         <li><a href="#p2">Hai mô hình khác nhau ở đâu</a></li>
-        <li><a href="#p3">Ba kiểu huấn luyện</a></li>
+        <li><a href="#p3">Ba kiểu huấn luyện &amp; lịch epoch</a></li>
         <li><a href="#p4">Năm tab kiểm tra gì</a></li>
         <li><a href="#p5">PyTorch và TensorRT</a></li>
         <li><a href="#p6">Cách đo thời gian và bộ nhớ</a></li>
@@ -391,7 +391,7 @@
             </tbody>
           </table>
         </div>
-        <p><span class="tag tag-must">Phải thuộc</span> <strong>Backbone là phần đắt tiền và dùng chung</strong>; head thì rẻ và thay được. Cùng một backbone lắp head khác nhau cho 5 bài toán khác nhau — đúng như 5 tab của demo.</p>
+        <p><span class="tag tag-must">Ghi chú</span> <strong>Backbone là phần đắt tiền và dùng chung</strong>; head thì rẻ và thay được. Cùng một backbone lắp head khác nhau cho 5 bài toán khác nhau — đúng như 5 tab của demo.</p>
 
         <h3>Tại sao phải làm model nhẹ</h3>
         <p>Model càng lớn càng chính xác, nhưng <strong>chạy chậm</strong> (camera an ninh cần trả lời trong vài chục mili-giây), <strong>ngốn bộ nhớ</strong> (card laptop chỉ 4 GB, không phải 48 GB như máy chủ) và <strong>tốn điện</strong>. Nên có cả một ngành nghiên cứu tên <em>inference-efficient</em>: giữ độ chính xác gần như cũ nhưng chạy rẻ hơn. Đề tài nằm ở đó.</p>
@@ -426,7 +426,7 @@
         <p>Ý tưởng: <strong>tầng đầu dùng convolution</strong> — rẻ, giỏi bắt chi tiết cục bộ như cạnh và nếp nhăn; <strong>tầng cuối dùng Transformer</strong> — đắt, giỏi liên kết toàn ảnh (“mắt trái và cằm cùng thuộc một khuôn mặt”).</p>
 
         <h3>Ghost thay đúng cái gì</h3>
-        <p><span class="tag tag-must">Phải thuộc</span> Ghost <strong>chỉ thay 4 khối ở Stage 1 và Stage 2</strong> — đổi <code>CBlock</code> thành <code>GhostV2BlockMasked</code>. <strong>Stage 3 giữ nguyên hoàn toàn.</strong></p>
+        <p><span class="tag tag-must">Ghi chú</span> Ghost <strong>chỉ thay 4 khối ở Stage 1 và Stage 2</strong> — đổi <code>CBlock</code> thành <code>GhostV2BlockMasked</code>. <strong>Stage 3 giữ nguyên hoàn toàn.</strong></p>
         <div class="tw">
           <table>
             <thead><tr><th>Thành phần</th><th>CBlock <span class="b">(baseline)</span></th><th>GhostV2Block <span class="g">(ghost)</span></th></tr></thead>
@@ -489,7 +489,7 @@
         </div>
 
         <h3>Nghịch lý thứ hai: nhanh hơn hay chậm hơn?</h3>
-        <p><span class="tag tag-risk">Dễ bị vặn</span> Hai nguồn số nói <strong>ngược nhau</strong>, phải biết trước:</p>
+        <p><span class="tag tag-risk">Ghi chú</span> Hai nguồn số nói <strong>ngược nhau</strong>, phải biết trước:</p>
         <div class="tw">
           <table>
             <thead><tr><th>Nguồn</th><th>Chế độ</th><th class="num">Baseline</th><th class="num">Ghost</th><th>Kết luận</th></tr></thead>
@@ -522,6 +522,33 @@
         <h3>Fine-tune — “học nghề cụ thể”</h3>
         <p>Lấy backbone đã pre-train, gắn head mới, rồi <strong>huấn luyện lại toàn bộ</strong> trên dữ liệu một bài toán cụ thể. Đây là cách cho kết quả tốt nhất, và là cách 4 tab khuôn mặt được tạo ra.</p>
 
+        <h3>Số epoch — đặt theo dataset, không theo model</h3>
+        <p>Số epoch <strong>tỉ lệ nghịch với kích thước tập</strong>: tập lớn như CASIA hội tụ ở <strong>40 epoch</strong>, tập nhỏ như ARFace/SCface cần <strong>~100 epoch</strong>. Mục tiêu là giữ <strong>tổng số bước tối ưu tương đương</strong> giữa các tập — tránh vừa quá khớp ở tập lớn vừa thiếu học ở tập nhỏ.</p>
+        <p><span class="tag tag-must">Ghi chú</span> Epoch là tham số <strong>theo dataset chứ không theo model</strong>. Trên cùng một tập, cả bốn kiến trúc dùng <strong>đúng cùng số epoch và cùng một công thức</strong> — batch 1.024, blr 5e-4, layer-decay 0,65, wd 0,05, drop-path 0,1, warmup 5, cosine. Nhờ vậy chênh lệch độ chính xác giữa các arm phản ánh <strong>đúng thay đổi kiến trúc</strong>, không phải do lịch huấn luyện.</p>
+        <p>Ngoài ra fine-tune ở đây là phần <strong>trình diễn khả năng chuyển giao downstream</strong> — thước đo phân biệt chính vẫn là linear probing với backbone đóng băng — nên ngân sách epoch được chọn để <strong>hội tụ tiết kiệm</strong>, không nhằm đạt SOTA.</p>
+
+        <div class="tw">
+          <table>
+            <caption>Báo cáo · bảng VI-5a · trung bình 3 seed · identity = Top-1, CelebA = mAP, LFW = AUC</caption>
+            <thead><tr><th>Dataset</th><th class="num">Epoch cấu hình</th><th class="num">Best</th><th class="num">Đạt best</th><th class="num">Chững lại (≥99 % best)</th><th class="num">% lịch</th></tr></thead>
+            <tbody>
+              <tr><td>CASIA · Top-1</td><td class="num">40</td><td class="num">91,32</td><td class="num">ep ~38</td><td class="num">ep ~29</td><td class="num">73 %</td></tr>
+              <tr><td>CelebA · mAP</td><td class="num">30</td><td class="num">0,79</td><td class="num">ep ~23</td><td class="num">ep ~20</td><td class="num">~67 %</td></tr>
+              <tr><td>LFW · AUC</td><td class="num">50</td><td class="num">0,99</td><td class="num">ep ~45</td><td class="num">ep ~17</td><td class="num">34 %</td></tr>
+              <tr><td>SCface · Top-1 <span class="b">(base)</span></td><td class="num">100</td><td class="num">45,13</td><td class="num">ep ~69</td><td class="num">ep ~69</td><td class="num">~70 %</td></tr>
+              <tr><td>SCface · Top-1 <span class="g">(ghost)</span></td><td class="num">100</td><td class="num">~31,7</td><td class="num">ep ~54</td><td class="num">ep ~54</td><td class="num">~55 %</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Đọc theo hình dạng đường học:</p>
+        <ul>
+          <li><strong>CelebA — chững từ ep ~20 (~67 % lịch).</strong> Đạt ≥99 % mAP ở epoch 20, best ở epoch 23; phần còn lại chủ yếu là tinh chỉnh cân bằng biên.</li>
+          <li><strong>CASIA — chững ~ep 29/40 (73 % lịch).</strong> Sau epoch 29 mức cải thiện &lt;1 %, best rơi vào ~ep 38 → lịch 40 là hợp lý, đuôi cuối là refinement biên.</li>
+          <li><strong>LFW — đạt ≥99 % AUC rất sớm (~ep 17) rồi có đuôi dài.</strong> AUC đã ~0,99 từ epoch 17, sau đó bò chậm tới best ~ep 45 để vắt nốt phần lẻ.</li>
+          <li><strong>SCface — không chững sớm, dùng gần trọn ngân sách.</strong> Đây là ca khó (ảnh độ phân giải thấp, xuyên độ phân giải): cải thiện đều tới tận best ~ep 69 (base) — chính xác lý do cấp 100 epoch cho tập nhỏ và khó này; cắt ngắn là mất điểm.</li>
+        </ul>
+
         <h3>Linear probe — “bài kiểm tra công tâm”</h3>
         <p><strong>Đóng băng toàn bộ backbone</strong>, chỉ huấn luyện <strong>một lớp tuyến tính</strong> phía trên: <code>BatchNorm1d(768, affine=False) → Linear(768, 1000)</code>, 90 epoch.</p>
         <div class="callout callout-must">
@@ -551,7 +578,7 @@
         <h3>CelebA — nhận thuộc tính khuôn mặt</h3>
         <p>Mỗi ảnh, mô hình chấm <strong>40 thuộc tính</strong> cùng lúc: “Đang cười”, “Đeo kính”, “Nam”, “Tóc vàng”… Đây là <strong>đa nhãn</strong> — một mặt có thể đúng nhiều thuộc tính cùng lúc.</p>
         <p>Giao diện hiện <strong>mọi thuộc tính được chấm trên 50%</strong>, không phải cố định top-5, vì số thuộc tính đúng thay đổi theo từng mặt. Nếu ảnh thuộc CelebA thì có sẵn đáp án nên tab chấm điểm luôn: tỉ lệ đúng trên 40 câu, cộng <strong>F1 trên các nhãn dương</strong>.</p>
-        <p><span class="tag tag-risk">Dễ bị vặn</span> <strong>Vì sao phải có F1?</strong> Vì phần lớn thuộc tính là “không” với gần như mọi khuôn mặt (ví dụ “Đội mũ”). Một mô hình lười trả lời “không” cho tất cả vẫn đạt accuracy rất cao. F1 trên nhãn dương mới lộ ra nó có thật sự nhận được gì không.</p>
+        <p><span class="tag tag-risk">Ghi chú</span> <strong>Vì sao phải có F1?</strong> Vì phần lớn thuộc tính là “không” với gần như mọi khuôn mặt (ví dụ “Đội mũ”). Một mô hình lười trả lời “không” cho tất cả vẫn đạt accuracy rất cao. F1 trên nhãn dương mới lộ ra nó có thật sự nhận được gì không.</p>
 
         <h3>CASIA — “người này là ai” trong 10.571 người</h3>
         <p><strong>Tập đóng</strong>: người trong ảnh chắc chắn nằm trong danh sách mà mô hình đã học.</p>
@@ -565,7 +592,7 @@
 
         <h3>SCface — bài khó nhất, và cái bẫy ba nhóm ảnh</h3>
         <p>Kịch bản thực tế: cảnh sát có ảnh thẻ chụp studio, cần nhận ra người đó trên <strong>camera an ninh mờ, xa, góc xấu</strong>. Mô hình chỉ được học ảnh thẻ nhưng bị kiểm tra trên ảnh camera. Đây là bài khó nhất, và là chỗ Ghost thua đậm nhất: <span class="b">45,13 %</span> → <span class="g">31,36 %</span>.</p>
-        <p><span class="tag tag-risk">Dễ bị vặn</span> Thư mục <code>surveillance_cameras_all/</code> trông như một tập, nhưng thực ra là <strong>ba loại ảnh hoàn toàn khác nhau</strong>:</p>
+        <p><span class="tag tag-risk">Ghi chú</span> Thư mục <code>surveillance_cameras_all/</code> trông như một tập, nhưng thực ra là <strong>ba loại ảnh hoàn toàn khác nhau</strong>:</p>
         <div class="tw">
           <table>
             <thead><tr><th>Nhóm</th><th>Là gì</th><th class="num">Số ảnh</th></tr></thead>
@@ -581,7 +608,7 @@
 
         <h3>LFW — “hai ảnh này có phải cùng một người không”</h3>
         <p>Khác hẳn ba tab trên: mô hình <strong>không đoán tên</strong>. Nó biến mỗi khuôn mặt thành một vector 768 chiều rồi đo <strong>độ tương đồng cosine</strong> — gần <code>+1</code> là cùng người, gần <code>0</code> hoặc âm là khác người.</p>
-        <p><span class="tag tag-must">Phải thuộc</span> Đây là <strong>tập mở</strong>. Không một người nào trong LFW là lớp mà mô hình đã học. Nghĩa là hệ thống xác minh được <strong>người chưa từng gặp</strong> — đúng như mở khoá điện thoại bằng khuôn mặt: máy không cần học bạn là ai trong 10.000 người, chỉ cần so bạn với ảnh đã đăng ký.</p>
+        <p><span class="tag tag-must">Ghi chú</span> Đây là <strong>tập mở</strong>. Không một người nào trong LFW là lớp mà mô hình đã học. Nghĩa là hệ thống xác minh được <strong>người chưa từng gặp</strong> — đúng như mở khoá điện thoại bằng khuôn mặt: máy không cần học bạn là ai trong 10.000 người, chỉ cần so bạn với ảnh đã đăng ký.</p>
         <div class="callout callout-risk">
           <span class="callout-lead">Chuyện về ngưỡng 0,235</span>
           <p>Ban đầu code dùng ngưỡng mặc định <strong>0,5</strong>. Khả năng tách hai lớp rất tốt — <strong>ROC-AUC 0,9925 / 0,9809</strong> — nhưng <strong>cặp đúng vẫn bị đọc thành “khác người”</strong>: tỉ lệ bắt đúng chỉ <strong>49,5 % / 37,5 %</strong>. Hạ xuống <strong>0,235</strong> cho <strong>~95 % / ~92 %</strong> độ chính xác trên cùng mẫu.</p>
@@ -617,7 +644,7 @@
         </div>
 
         <h3>Engine không mang đi được</h3>
-        <p><span class="tag tag-risk">Dễ bị vặn</span> Một engine bị khoá chặt vào <strong>kiến trúc GPU + phiên bản TensorRT</strong> đã tạo ra nó. Chuyện thật đã gặp <strong>ngay trên cùng một máy</strong>: <code>engines/</code> dựng bằng môi trường ảo <code>./.venv</code> (TensorRT 10.16), nhưng Python hệ thống lại có <strong>TensorRT 11.2</strong> — chạy app bằng Python hệ thống thì <strong>toàn bộ 20 engine hỏng cùng lúc</strong>:</p>
+        <p><span class="tag tag-risk">Ghi chú</span> Một engine bị khoá chặt vào <strong>kiến trúc GPU + phiên bản TensorRT</strong> đã tạo ra nó. Chuyện thật đã gặp <strong>ngay trên cùng một máy</strong>: <code>engines/</code> dựng bằng môi trường ảo <code>./.venv</code> (TensorRT 10.16), nhưng Python hệ thống lại có <strong>TensorRT 11.2</strong> — chạy app bằng Python hệ thống thì <strong>toàn bộ 20 engine hỏng cùng lúc</strong>:</p>
         <pre>Serialization assertion stdVersionRead == kSERIALIZATION_VERSION failed.
 Current Version: 243, Serialized Engine Version: 240</pre>
         <p>Và một cái bẫy nữa: hàm <code>deserialize_cuda_engine</code> <strong>không báo lỗi</strong> khi lệch phiên bản — nó ghi log rồi <strong>trả về <code>None</code></strong>, khiến dòng sau chết với thông báo vô nghĩa. Code hiện đã kiểm tra <code>None</code>, báo đúng nguyên nhân, và in phiên bản interpreter/torch/tensorrt ngay lúc khởi động.</p>
@@ -644,7 +671,7 @@ Current Version: 243, Serialized Engine Version: 240</pre>
         <p>GPU chạy <strong>bất đồng bộ</strong>: CPU ra lệnh xong là quay về ngay, GPU mới bắt đầu làm. Bấm đồng hồ quanh lời gọi sẽ đo nhầm thời gian <em>ra lệnh</em>, không phải thời gian <em>làm</em>. Code dùng <strong>CUDA event</strong> — hai mốc đặt trong hàng đợi của GPU.</p>
 
         <h3>VRAM tính theo từng mô hình, không theo tiến trình</h3>
-        <p><span class="tag tag-risk">Dễ bị vặn</span> Lấy thẳng <code>max_memory_allocated()</code> của cả tiến trình sẽ bao gồm <strong>mô hình kia đang nằm trong cache</strong> và cả <strong>CUDA context</strong> → cả hai mô hình đều ra ~700 MB giống hệt nhau, <strong>xoá sạch đúng cái khác biệt mà demo sinh ra để cho thấy</strong>. Nên demo báo: <strong>trọng số của chính mô hình đó + phần kích hoạt tăng thêm của đúng lượt chạy vừa rồi</strong>.</p>
+        <p><span class="tag tag-risk">Ghi chú</span> Lấy thẳng <code>max_memory_allocated()</code> của cả tiến trình sẽ bao gồm <strong>mô hình kia đang nằm trong cache</strong> và cả <strong>CUDA context</strong> → cả hai mô hình đều ra ~700 MB giống hệt nhau, <strong>xoá sạch đúng cái khác biệt mà demo sinh ra để cho thấy</strong>. Nên demo báo: <strong>trọng số của chính mô hình đó + phần kích hoạt tăng thêm của đúng lượt chạy vừa rồi</strong>.</p>
         <p>Với dòng TensorRT còn phải làm khác nữa: TensorRT giữ trọng số và vùng nháp <strong>bên ngoài</strong> bộ cấp phát của torch, nơi <code>max_memory_allocated()</code> không nhìn thấy. Đo theo kiểu PyTorch sẽ ra “trọng số của bản PyTorch đang nằm không” và “kích hoạt gần bằng 0” — sai hoàn toàn. Code đọc <code>device_memory_size</code> của engine và kích thước file engine thay thế.</p>
 
         <h3>Tab LFW: cộng chứ không lấy trung bình</h3>
@@ -684,7 +711,7 @@ Current Version: 243, Serialized Engine Version: 240</pre>
             </tbody>
           </table>
         </div>
-        <p><span class="tag tag-must">Phải thuộc</span> Tỉ lệ Base/Ghost <strong>luôn nằm trong 1,05× – 1,26×</strong> trên mọi bài và mọi backend. Bộ kiểm thử đặt ngưỡng cảnh báo ở <strong>1,6×</strong>: chênh nhiều hơn thế <strong>chắc chắn không phải do mô hình</strong>, mà do một nhánh âm thầm rơi về PyTorch.</p>
+        <p><span class="tag tag-must">Ghi chú</span> Tỉ lệ Base/Ghost <strong>luôn nằm trong 1,05× – 1,26×</strong> trên mọi bài và mọi backend. Bộ kiểm thử đặt ngưỡng cảnh báo ở <strong>1,6×</strong>: chênh nhiều hơn thế <strong>chắc chắn không phải do mô hình</strong>, mà do một nhánh âm thầm rơi về PyTorch.</p>
 
         <h3>Bộ nhớ</h3>
         <div class="tw">
@@ -728,7 +755,7 @@ engines/ checkpoints/ datasets/   ← không đưa lên git, do script tạo ra<
           <li>Tab định danh còn đi tìm <strong>một ảnh huấn luyện của người được đoán</strong> để hiện lên.</li>
           <li>Bảng tài nguyên được dựng: tham số, trọng số, độ trễ, VRAM, cộng dòng chênh lệch Ghost − Base.</li>
         </ol>
-        <p><span class="tag tag-risk">Dễ bị vặn</span> <strong>Tiền xử lý phải dùng bicubic.</strong> Đổi sang bilinear từng làm tụt độ chính xác thật, nặng nhất ở SCface — vì phải khớp <strong>đúng phép biến đổi đã dùng lúc huấn luyện</strong>.</p>
+        <p><span class="tag tag-risk">Ghi chú</span> <strong>Tiền xử lý phải dùng bicubic.</strong> Đổi sang bilinear từng làm tụt độ chính xác thật, nặng nhất ở SCface — vì phải khớp <strong>đúng phép biến đổi đã dùng lúc huấn luyện</strong>.</p>
 
         <h3>Chỉ giữ một bài trên card</h3>
         <p>Card 4 GB <strong>chứa vừa cả 10 mô hình</strong> (3.447 MB) — nhưng khi đó <strong>còn trống 0 MB</strong>, nên người xem mở hết 5 tab rồi chọn TensorRT thì không còn chỗ cho engine và bị âm thầm đẩy về PyTorch. Giải pháp: cache chỉ giữ <strong>hai nhánh của tab đang mở</strong>, đổi tab là giải phóng ngay — cả mô hình lẫn engine. Đo thực tế khi đi hết 5 tab: <strong>luôn 2 mô hình + 2 engine, còn trống 1,0–2,6 GB</strong>.</p>
